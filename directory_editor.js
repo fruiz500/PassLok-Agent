@@ -1,0 +1,246 @@
+//code for editing the directory entries (synth and locDir) in sync storage
+
+let currentMode = "synth";
+let currentHost = "";
+let masterPasswordContext = null; // 'synth', 'decrypt', or 'notes'
+
+function setHost(host) {
+  currentHost = host;
+}
+
+function setMode(mode) {
+  currentMode = mode;
+  updateInputLabels();
+}
+
+// Update input placeholders based on mode
+
+function updateInputLabels() {
+  const nameInput = document.getElementById("new-lock-name");
+  const valueInput = document.getElementById("new-lock-value");
+  if (!nameInput || !valueInput) return;
+
+  if (currentMode === "synth") {
+    nameInput.placeholder = "Name (e.g. Alice)";
+    valueInput.placeholder = "Lock (Public Key)";
+  } else {
+    nameInput.placeholder = "Name/Email";
+    valueInput.placeholder = "Value";
+  }
+}
+
+// Render Directory Entries
+
+let lastRenderTime = 0;
+
+async function renderDirectory() {
+// Debounce rapid calls
+  const now = Date.now();
+  if (now - lastRenderTime < 500) { // 500ms debounce threshold
+    return; // Skip if called too soon
+  }
+  lastRenderTime = now;
+
+  const container = document.getElementById("directory-list");
+  container.innerHTML =
+    '<div style="padding: 10px; text-align: center;">Loading...</div>';
+  updateInputLabels();
+
+  let directory = {};
+  if (currentMode === "synth") {
+    if (currentHost) {
+      const data = await chrome.storage.sync.get([currentHost]);
+      directory = (data[currentHost] || {}).synth || {};
+    }
+  } else {
+    const globalData = await chrome.storage.sync.get(["locDir"]);
+    directory = { ...globalData.locDir };
+
+    if (typeof updateLockList === 'function') {
+      updateLockList(directory);
+    }else {
+      console.error("updateLockList function is not accessible from directory_editor.js");
+    }
+
+    // Include "(Me)" entry if available
+    if (currentHost) {
+      const hostData = await chrome.storage.sync.get([currentHost]);
+      const crypt = (hostData[currentHost] || {}).crypt;
+      if (crypt && crypt.email) {
+        directory["(Me) " + crypt.email] = crypt.lock || "No Lock";
+      }
+    }
+  }
+
+  // NEW: Notify the encrypt card (if it's visible)
+  if (window.updateLockList && cards.encrypt && !cards.encrypt.classList.contains('hidden')) {
+    window.updateLockList(directory);
+  }
+
+  container.innerHTML = "";
+  const entries = Object.entries(directory).filter(
+    ([name, value]) => name && name !== "null",
+  );
+
+  if (entries.length === 0) {
+    container.innerHTML =
+      '<div style="padding: 10px; color: #666;">No entries found.</div>';
+    return;
+  }
+
+  entries.forEach(([name, value]) => {
+    const item = document.createElement("div");
+    item.style =
+      "display: flex; justify-content: space-between; align-items: center; padding: 8px; border-bottom: 1px solid #eee; font-size: 12px;";
+
+    // locDir values are arrays [lock], synth values are strings
+    const displayValue = Array.isArray(value) ? value[0] : value;
+    const previewText =
+      typeof displayValue === "string"
+        ? displayValue
+        : JSON.stringify(displayValue);
+
+    item.innerHTML = `
+      <div style="flex: 1; overflow: hidden; text-overflow: ellipsis; margin-right: 10px;">
+        <strong>${name}</strong><br>
+        <span style="color: #666; font-family: monospace; font-size: 10px;">${previewText}</span>
+      </div>
+      <div style="display: flex; gap: 5px;">
+        <button class="edit-entry" data-name="${name}" data-value='${JSON.stringify(value)}' style="padding: 2px 5px; cursor: pointer;">Edit</button>
+        <button class="delete-entry" data-name="${name}" style="padding: 2px 5px; cursor: pointer; color: red;">Del</button>
+      </div>
+    `;
+    container.appendChild(item);
+  });
+
+  // Delete Logic
+  container.querySelectorAll(".delete-entry").forEach((btn) => {
+    btn.addEventListener("click", async (e) => {
+      const name = e.target.dataset.name;
+      if (!confirm(`Remove ${name} from directory?`)) return;
+
+      if (currentMode === "synth") {
+        const d = await chrome.storage.sync.get([currentHost]);
+        if (d[currentHost]?.synth) {
+          delete d[currentHost].synth[name];
+          await chrome.storage.sync.set({ [currentHost]: d[currentHost] });
+        }
+      } else {
+        if (name.startsWith("(Me) ")) {
+          const d = await chrome.storage.sync.get([currentHost]);
+          if (d[currentHost]?.crypt) {
+            delete d[currentHost].crypt;
+            await chrome.storage.sync.set({ [currentHost]: d[currentHost] });
+          }
+        } else {
+          const d = await chrome.storage.sync.get(["locDir"]);
+          let locDir = d.locDir || {};
+          delete locDir[name];
+          await chrome.storage.sync.set({ locDir });
+        }
+      }
+      renderDirectory();
+    });
+  });
+
+  // Edit Logic (Update Value Only)
+  container.querySelectorAll(".edit-entry").forEach((btn) => {
+    btn.addEventListener("click", async (e) => {
+      const name = e.target.dataset.name;
+      let rawValue = JSON.parse(e.target.dataset.value);
+      const currentValue = Array.isArray(rawValue) ? rawValue[0] : rawValue;
+
+      const newValue = prompt(`Update Lock for ${name}:`, currentValue);
+      if (newValue === null || newValue === currentValue) return;
+
+      if (currentMode === "synth") {
+        const d = await chrome.storage.sync.get([currentHost]);
+        if (d[currentHost]?.synth) {
+          d[currentHost].synth[name] = newValue;
+          await chrome.storage.sync.set({ [currentHost]: d[currentHost] });
+        }
+      } else {
+        if (name.startsWith("(Me) ")) {
+          const d = await chrome.storage.sync.get([currentHost]);
+          if (d[currentHost]?.crypt) {
+            d[currentHost].crypt.lock = newValue;
+            await chrome.storage.sync.set({ [currentHost]: d[currentHost] });
+          }
+        } else {
+          const d = await chrome.storage.sync.get(["locDir"]);
+          let locDir = d.locDir || {};
+          // Maintain array structure for locDir
+          locDir[name] = [newValue];
+          await chrome.storage.sync.set({ locDir });
+        }
+      }
+      renderDirectory();
+    });
+  });
+}
+
+// Add Entry Logic
+document
+  .getElementById("add-to-directory")
+  .addEventListener("click", async () => {
+    const name = document.getElementById("new-lock-name").value.trim();
+    const value = document.getElementById("new-lock-value").value.trim();
+    if (!name || !value) return;
+
+    if (currentMode === "synth") {
+      const data = await chrome.storage.sync.get([currentHost]);
+      const hostData = data[currentHost] || {};
+      hostData.synth = hostData.synth || {};
+      hostData.synth[name] = value;
+      await chrome.storage.sync.set({ [currentHost]: hostData });
+    } else {
+      const data = await chrome.storage.sync.get(["locDir"]);
+      const locDir = data.locDir || {};
+      locDir[name] = [value];
+      await chrome.storage.sync.set({ locDir });
+    }
+
+    document.getElementById("new-lock-name").value = "";
+    document.getElementById("new-lock-value").value = "";
+    renderDirectory();
+  });
+
+let previousCardId = null;
+
+window.DirectoryEditor = {
+  renderDirectory,
+  setMode,
+  setHost,
+  open: () => {
+    // Save currently visible card
+    const cards = document.querySelectorAll(".card");
+    previousCardId = null;
+    cards.forEach((card) => {
+      if (!card.classList.contains("hidden") && card.id !== "directory-card") {
+        previousCardId = card.id;
+      }
+      card.classList.add("hidden");
+    });
+    const masterSection = document.getElementById("master-password-section");
+    if (masterSection) masterSection.classList.add("hidden");
+    document.getElementById("directory-card").classList.remove("hidden");
+    renderDirectory();
+  },
+  close: () => {
+    document.getElementById("directory-card").classList.add("hidden");
+    if (previousCardId) {
+      const prevCard = document.getElementById(previousCardId);
+      if (prevCard) prevCard.classList.remove("hidden");
+    }
+  },
+};
+
+function displaySync() {
+  chrome.storage.sync.get(null, (items) => {
+    chrome.storage.sync.get(null, (items) => {
+      console.log('All sync storage:', items);
+    });
+  });
+}
+
+window.displaySync = displaySync;

@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+  <style>
+    body {
+      font-family: sans-serif;
+      padding: 10px;
+      background: #f4f4f4;
+    }
+
+    .card {
+      background: white;
+      padding: 15px;
+      margin-bottom: 10px;
+      border-radius: 8px;
+      box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+    }
+
+    .hidden {
+      display: none !important;
+    }
+
+    h2 {
+      font-size: 14px;
+      margin-top: 0;
+      color: #2563eb;
+    }
+
+    button {
+      width: 100%;
+      padding: 8px;
+      margin-top: 5px;
+      cursor: pointer;
+    }
+
+    input[type=text],
+    input[type=password],
+    input[type=email] {
+      width: 90%;
+      padding: 6px;
+      margin-top: 6px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      font-size: 14px;
+    }
+
+    label {
+      font-size: 12px;
+      color: #444;
+      margin-top: 8px;
+      display: block;
+    }
+
+    /* Force the controls (Signed, Anon, Checkbox) into one line */
+    .controls-line {
+      display: flex;
+      flex-direction: row;
+      flex-wrap: nowrap;
+      justify-content: center;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.85rem;
+      margin: 10px 0;
+      white-space: nowrap;
+    }
+
+    .controls-line label {
+      display: flex;
+      align-items: center;
+      gap: 3px;
+    }
+
+    .divider {
+      color: #ccc;
+      margin: 0 2px;
+    }
+
+    .drop-target {
+      min-height: 120px;
+      border: 2px dashed #999;
+      border-radius: 6px;
+      text-align: center;
+      padding: 32px 16px;
+      font-size: 14px;
+      color: #444;
+      background-color: #f8f8f8;
+      user-select: none;
+      transition: background-color 0.2s, border-color 0.2s;
+    }
+
+    /* Standard drag-over: Pale Blue */
+    .drop-target.drag-over {
+      background-color: #e3f2fd;
+      border-color: #2196f3;
+    }
+
+    /* Folder Key active drag-over: Pale Green */
+    .drop-target.folder-active.drag-over {
+      background-color: #e8f5e9;
+      border-color: #4caf50;
+    }
+
+    /* Ensure the compose box is visible and looks like an input */
+    #composeBox {
+      width: 100%;
+      min-height: 100px;
+      /* Crucial: contenteditable divs have 0 height if empty */
+      overflow-y: auto;
+      background-color: #fff;
+      border: 1px solid #999;
+      padding: 5px;
+      margin: 10px 0;
+      display: block;
+      text-align: left;
+    }
+
+    /* Placeholder effect for contenteditable */
+    #composeBox:empty:before {
+      content: attr(placeholder);
+      color: #aaa;
+      font-style: italic;
+      pointer-events: none;
+      /* Allows clicking "through" the text */
+      display: block;
+      /* For Firefox */
+    }
+
+    /* Layout for the top row (List + Status) */
+    .flex-container {
+      display: flex;
+      align-items: flex-start;
+      margin-bottom: 10px;
+    }
+
+    .status-area {
+      font-size: 0.85rem;
+      word-break: break-word;
+    }
+
+    /* Visual feedback for active toolbar buttons */
+    .intLink.active {
+      background-color: #bbb;
+      /* Darker grey background */
+      outline: 1px solid #333;
+      /* Sharp border */
+      filter: contrast(1.5);
+      /* Make the icon pop */
+    }
+
+    /* This only applies when the card is NOT hidden */
+    #encryptCard:not(.hidden) {
+      display: flex !important;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    #composeBox::-webkit-resizer {
+      background-color: #eee;
+      border: 1px solid #bbb;
+    }
+
+    #view::-webkit-resizer {
+      background-color: #ddd;
+    }
+
+    /* Hide elements based on the card's data-mode */
+    [data-mode="encrypt"] .decrypt-only {
+      display: none !important;
+    }
+
+    [data-mode="decrypt"] .encrypt-only {
+      display: none !important;
+    }
+
+    /* Ensure the card is visible when not hidden */
+    .card:not(.hidden) {
+      display: block;
+    }
+  </style>
+</head>
+
+<body>
+  <!-- Global Status Bar - Always visible regardless of card -->
+  <div id="global-status-card" class="card"
+    style="padding: 8px; margin-bottom: 10px; display: flex; align-items: center; justify-content: space-between; min-height: 32px;">
+    <!-- Wrap the status and indicator in a column-flex div -->
+    <div style="display: flex; flex-direction: column; flex-grow: 1;">
+      <div id="synth-status" style="font-size: 13px;">Welcome to PassLok. For help, click this button: </div>
+
+      <!-- The persistent reminder -->
+      <div id="folder-active-indicator"
+        style="display: none; color: #0284c7; font-weight: bold; font-size: 11px; margin-top: 2px;">
+        Folder Key Active
+        <span id="clear-folder-key"
+          style="margin-left: 8px; cursor: pointer; text-decoration: underline; color: #ef4444; font-weight: normal;">[Clear]</span>
+      </div>
+    </div>
+
+    <button id="help-btn" title="Get Help" style="
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    border: 1px solid #999;
+    background: #eee;
+    font-size: 12px;
+    font-weight: bold;
+    cursor: pointer;
+    flex-shrink: 0;
+    margin-left: 8px;
+  ">?</button>
+  </div>
+  <!-- Your existing synth-status content (e.g., <div id="status-text"></div>) -->
+  </div>
+
+  <!-- Master Password Section (shared) -->
+  <div id="master-password-section" class="card hidden">
+    <h2>Master Password</h2>
+
+    <!-- This container will be toggled by setCryptoMode -->
+    <div id="decrypt-email-display" class="hidden">
+      <label for="user-email">User Email</label>
+      <input type="email" id="user-email" placeholder="your@email.com" style="width: 90%; margin-bottom: 8px;">
+    </div>
+
+    <div style="position: relative; width: 90%; display: inline-block;">
+      <input type="password" id="m-pass" placeholder="Master Password" autocomplete="current-password"
+        style="width: 100%; padding-right: 30px; box-sizing: border-box;">
+      <svg id="toggle-mpass" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#666" stroke-width="2"
+        stroke-linecap="round" stroke-linejoin="round" style="
+        cursor:pointer;
+        position: absolute;
+        top: 50%;
+        right: 8px;
+        transform: translateY(-50%);
+      ">
+        <!-- Eye open -->
+        <g id="icon-eye-open">
+          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+          <circle cx="12" cy="12" r="3" />
+        </g>
+        <!-- Eye closed -->
+        <g id="icon-eye-closed" style="display:none;">
+          <path
+            d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
+          <line x1="1" y1="1" x2="23" y2="23" />
+        </g>
+      </svg>
+    </div>
+
+    <!-- Strength Bar -->
+    <div id="strength-bar" style="height:4px; background:#ddd; margin-top:4px; border-radius:2px; width:90%;">
+      <div id="strength-fill" style="height:100%; width:0%; background:#ef4444; transition:all 0.3s;"></div>
+    </div>
+    <div id="hashili" style="font-size:10px; color:#666; margin-top:4px; min-height:14px;"></div>
+
+    <!-- Synth Mode Inputs -->
+    <div id="synth-extra-inputs" class="hidden">
+      <label for="serial">Serial</label>
+      <input type="text" id="serial" placeholder="Serial">
+
+      <label for="allowed-chars">Allowed Characters</label>
+      <input type="text" id="allowed-chars" placeholder="e.g. abcdef123">
+
+      <label for="length-limit">Length Limit</label>
+      <input type="text" id="length-limit" placeholder="e.g. 16">
+    </div>
+  </div>
+
+  <!-- Cards follow below -->
+  <div id="card-synth" class="card hidden">
+    <h2>Passwords</h2>
+    <button id="do-synth">Synthesize & Fill</button>
+    <button id="useVaultPwd">Use or change stored password</button>
+    <button id="change-synth">Change password</button>
+  </div>
+
+  <!-- Encrypted Site Notes Card -->
+  <div class="card hidden" id="card-note">
+    <div class="card-header">
+      <span class="card-title">Site Notes</span>
+    </div>
+    <div class="card-content">
+
+      <!-- Locked State -->
+      <div id="notes-locked" class="hidden" style="text-align: center; padding: 20px 0;">
+        <div style="color: #666; margin-bottom: 12px;">This note is encrypted.</div>
+        <button id="unlock-notes-btn" class="btn btn-primary">Unlock with Master Password</button>
+      </div>
+
+      <!-- Editor State -->
+      <div id="notes-editor" class="hidden">
+        <textarea id="site-notes-input" placeholder="Private notes for this site..."
+          style="width: 100%; height: 120px; margin-bottom: 8px; font-family: inherit; font-size: 13px; border: 1px solid #ddd; border-radius: 4px; padding: 8px; resize: vertical;"></textarea>
+        <div style="display: flex; gap: 8px;">
+          <button id="save-notes-btn" class="btn btn-primary" style="flex: 1;">Save Encrypted</button>
+          <button id="clear-notes-btn" class="btn btn-primary" style="flex: 1;">Delete</button>
+          <button id="save-once-btn" class="btn btn-primary" style="flex: 1;">Save Read-Once</button>
+        </div>
+      </div>
+      <!-- Inside #card-note in sidepanel.html -->
+      <div style="margin-top: 12px; border-top: 1px solid #eee; padding-top: 10px;">
+        <button id="manual-file-mode-btn" class="btn-secondary" style="width: 100%;">Encrypt/Decrypt Files</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="email-prompt" class="card hidden">
+    <h2>Setup Required</h2>
+    <p style="font-size:12px; color:#666;">
+      Enter your email address. This will be used as a salt for key derivation and stored securely in Chrome sync.
+    </p>
+    <input type="email" id="my-email" placeholder="your@email.com" style="width:90%; margin-top:8px;">
+    <button id="save-email">Save & Continue</button>
+  </div>
+
+  <div id="sender-prompt-overlay" class="card hidden">
+    <h2>Identify Sender</h2>
+    <p style="font-size:12px; color:#666;">
+      This message includes a sender Lock. Associate it with a name:
+    </p>
+    <div id="sender-lock-preview"
+      style="font-size:10px; background:#f8f8f8; padding:5px; margin-bottom:8px; word-break:break-all; border-radius:3px;">
+    </div>
+    <input id="new-sender-name" placeholder="Enter sender name (e.g. Alice)" style="width:90%; margin-bottom:8px;">
+    <div style="margin-top:8px;">
+      <button id="save-sender-lock">Save to Directory</button>
+      <button id="ignore-sender-lock">Ignore</button>
+    </div>
+  </div>
+
+  <!-- Directory Card -->
+  <div id="directory-card" class="card hidden">
+    <h3>Directory</h3>
+    <div id="directory-list"
+      style="max-height: 300px; overflow-y: auto; margin-bottom: 10px; border: 1px solid #ddd; border-radius: 4px;">
+      <!-- Entries will be injected here -->
+    </div>
+    <div class="input-group">
+      <input type="text" id="new-lock-name" placeholder="Name">
+      <input type="text" id="new-lock-value" placeholder="Value">
+      <button id="add-to-directory" class="btn-primary" style="width: 100%; margin-top: 5px;">Add Entry</button>
+    </div>
+    <button id="close-directory" class="btn-secondary" style="width: 100%; margin-top: 10px;">Back</button>
+  </div>
+
+  <div id="card-crypto" class="card hidden" data-mode="encrypt">
+    <div id="encryptMsg" class="message centered">PassLok Workspace</div>
+
+    <!-- ENCRYPT ONLY: Recipient Selection -->
+    <div class="encrypt-only ui-row" style="display: flex; flex-direction: row; width: 100%; align-items: flex-start;">
+      <select id="lockList" class="cssbox" size="4" multiple style="width: 40%; min-width: 40%;"
+        title="Hold Ctrl/Cmd to select multiple recipients"></select>
+      <div id="recipientStatus" class="status-area" style="width: 55%; padding-left: 10px; font-size: 0.8rem;">
+        To: <span id="composeRecipientsBox">Nobody! (Making an invitation)</span>
+      </div>
+      <div>
+        <button id="open-directory-btn" class="btn-link"
+          style="font-size: 12px; margin-top: 6px; padding: 0; border: none; background: none; color: #007bff; cursor: pointer;">Manage
+          Directory</button>
+      </div>
+    </div>
+
+    <!-- ENCRYPT ONLY: Modes -->
+    <div class="encrypt-only ui-row centered"
+      style="display: flex; flex-direction: row; flex-wrap: nowrap; justify-content: center; align-items: center; gap: 5px; font-size: 0.75rem; width: 100%;">
+      <label><input type="radio" name="lockmodes" id="signedMode" checked> Signed</label>
+      <label><input type="radio" name="lockmodes" id="anonMode"> Anonymous</label>
+      <span class="divider">|</span>
+      <label title="Prepend your Lock"><input type="checkbox" id="includeLock" checked> Add my Lock</label>
+    </div>
+
+    <!-- SHARED: Toolbar -->
+    <div id="toolBar" class="toolbar-container" style="background: #eee; padding: 2px; border: 1px solid #ccc;">
+
+      <!-- Row 1: Dropdowns (Restored & Expanded) -->
+      <div id="toolBar1"
+        style="display: flex; flex-wrap: wrap; gap: 2px; margin-bottom: 2px; border-bottom: 1px solid #ddd; padding-bottom: 2px;">
+        <select id="formatBlock" title="headings, etc." style="font-size: 0.7rem;">
+          <option selected>- format -</option>
+          <option value="h1">Title 1</option>
+          <option value="h2">Title 2</option>
+          <option value="h3">Title 3</option>
+          <option value="h4">Title 4</option>
+          <option value="h5">Title 5</option>
+          <option value="h6">Subtitle</option>
+          <option value="p">Paragraph</option>
+          <option value="pre">Preformatted</option>
+        </select>
+        <select id="fontName" title="font type" style="font-size: 0.7rem;">
+          <option selected>- font -</option>
+          <option>Arial</option>
+          <option>Arial Black</option>
+          <option value="Times New Roman">Times New Roman</option> <!-- Added Serif -->
+          <option>Courier New</option>
+          <option>Verdana</option>
+          <option>Comic Sans MS</option>
+          <option>Impact</option>
+        </select>
+        <select id="fontSize" title="font size" style="font-size: 0.7rem;">
+          <option selected>- size -</option>
+          <option value="1">Very small</option>
+          <option value="2">A bit small</option>
+          <option value="3">Normal</option>
+          <option value="4">Medium-large</option>
+          <option value="5">Big</option>
+          <option value="6">Very big</option>
+          <option value="7">Maximum</option>
+        </select>
+        <select id="foreColor" title="text color" style="font-size: 0.7rem;">
+          <option selected>- color -</option>
+          <option value="brown">Brown</option>
+          <option value="red">Red</option>
+          <option value="orange">Orange</option>
+          <option value="green">Green</option>
+          <option value="blue">Blue</option>
+          <option value="purple">Violet</option>
+          <option value="black">Black</option>
+        </select>
+      </div>
+
+      <!-- Row 2: Icons (Restored & Expanded) -->
+      <div id="toolBar2" style="display: flex; flex-wrap: wrap; gap: 3px; align-items: center;">
+        <img class="intLink" title="Bold"
+          src="data:image/gif;base64,R0lGODlhFgAWAID/AMDAwAAAACH5BAEAAAAALAAAAAAWABYAQAInhI+pa+H9mJy0LhdgtrxzDG5WGFVk6aXqyk6Y9kXvKKNuLbb6zgMFADs="
+          style="cursor:pointer;" />
+        <img class="intLink" title="Italic"
+          src="data:image/gif;base64,R0lGODlhFgAWAKEDAAAAAF9vj5WIbf///yH5BAEAAAMALAAAAAAWABYAAAIjnI+py+0Po5x0gXvruEKHrF2BB1YiCWgbMFIYpsbyTNd2UwAAOw=="
+          style="cursor:pointer;" />
+        <img class="intLink" title="Underline"
+          src="data:image/gif;base64,R0lGODlhFgAWAKECAAAAAF9vj////////yH5BAEAAAIALAAAAAAWABYAAAIrlI+py+0Po5zUgAsEzvEeL4Ea15EiJJ5PSqJmuwKBEKgxVuXWtun+DwxCCgA7"
+          style="cursor:pointer;" />
+
+        <!-- Added Undo / Redo -->
+        <img class="intLink" title="Undo"
+          src="data:image/gif;base64,R0lGODlhFgAWAOMKADljwliE33mOrpGjuYKl8aezxqPD+7/I19DV3NHa7P///////////////////////yH5BAEKAA8ALAAAAAAWABYAAARR8MlJq7046807TkaYeJJBnES4EeUJvIGapWYAC0CsocQ7SDlWJkAkCA6ToMYWIARGQF3mRQVIEjkkSVLIbSfEwhdRIH4fh/DZMICe3/C4nBQBADs="
+          style="cursor:pointer;" />
+        <img class="intLink" title="Redo"
+          src="data:image/gif;base64,R0lGODlhFgAWAMIHAB1ChDljwl9vj1iE34Kl8aPD+7/I1////yH5BAEKAAcALAAAAAAWABYAAANKeLrc/jDKSesyphi7SiEgsVXZEATDICqBVJjpqWZt9NaEDNbQK1wCQsxlYnxMAImhyDoFAElJasRRvAZVRqqQXUy7Cgx4TC6bswkAOw=="
+          style="cursor:pointer;" />
+
+        <img class="intLink" title="Left align"
+          src="data:image/gif;base64,R0lGODlhFgAWAID/AMDAwAAAACH5BAEAAAAALAAAAAAWABYAQAIghI+py+0Po5y02ouz3jL4D4JMGELkGYxo+qzl4nKyXAAAOw=="
+          style="cursor:pointer;" />
+        <img class="intLink" title="Center align"
+          src="data:image/gif;base64,R0lGODlhFgAWAID/AMDAwAAAACH5BAEAAAAALAAAAAAWABYAQAIfhI+py+0Po5y02ouz3jL4D4JOGI7kaZ5Bqn4sycVbAQA7"
+          style="cursor:pointer;" />
+        <img class="intLink" title="Numbered list"
+          src="data:image/gif;base64,R0lGODlhFgAWAMIGAAAAADljwliE35GjuaezxtHa7P///////yH5BAEAAAcALAAAAAAWABYAAAM2eLrc/jDKSespwjoRFvggCBUBoTFBeq6QIAysQnRHaEOzyaZ07Lu9lUBnC0UGQU1K52s6n5oEADs="
+          style="cursor:pointer;" />
+        <img class="intLink" title="Dotted list"
+          src="data:image/gif;base64,R0lGODlhFgAWAMIGAAAAAB1ChF9vj1iE33mOrqezxv///////yH5BAEAAAcALAAAAAAWABYAAAMyeLrc/jDKSesppNhGRlBAKIZRERBbqm6YtnbfMY7lud64UwiuKnigGQliQuWOyKQykgAAOw=="
+          style="cursor:pointer;" />
+        <img class="intLink" title="Hyperlink"
+          src="data:image/gif;base64,R0lGODlhFgAWAOMKAB1ChDRLY19vj3mOrpGjuaezxrCztb/I19Ha7Pv8/f///////////////////////yH5BAEKAA8ALAAAAAAWABYAAARY8MlJq7046827/2BYIQVhHg9pEgVGIklyDEUBy/RlE4FQF4dCj2AQXAiJQDCWQCAEBwIioEMQBgSAFhDAGghGi9XgHAhMNoSZgJkJei33UESv2+/4vD4TAQA7"
+          style="cursor:pointer;" />
+        <img class="intLink" title="Remove formatting"
+          src="data:image/gif;base64,R0lGODlhFgAWAIQbAD04KTRLYzFRjlldZl9vj1dusY14WYODhpWIbbSVFY6O7IOXw5qbms+wUbCztca0ccS4kdDQjdTLtMrL1O3YitHa7OPcsd/f4PfvrvDv8Pv5xv///////////////////yH5BAEKAB8ALAAAAAAWABYAAAV84CeOZGmeaKqubMteyzK547QoBcFWTm/jgsHq4rhMLoxFIehQQSAWR+Z4IAyaJ0kEgtFoLIzLwRE4oCQWrxoTOTAIhMCZ0tVgMBQKZHAYyFEWEV14eQ8IflhnEHmFDQkAiSkQCI2PDC4QBg+OAJc0ewadNCOgo6anqKkoIQA7"
+          style="cursor:pointer;" />
+
+        <!-- File Tools -->
+        <label for="imgFile"><img class="intLink" title="Insert image"
+            src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABIAAAASCAMAAABhEH5lAAAAbFBMVEUAAAAAAAAmJibm5uaJiYnZ2dnn5+e5ubmBgYHNzc3z8/Pr6+vW1ta2trZ/f3/y8vLQ0NDPz8/Dw8OgoKCOjo54eHgcHBwGBgb+/v7T09PIyMi+vr6srKyEhIRqampiYmJbW1tPT08qKioRERGLOctyAAAAAXRSTlMAQObYZgAAAHJJREFUGNOtzkkShCAQRNFKbLsVsZ3nWe9/R8EAYeHSv6u3qEh6qo0/TkUiKULNbCglfZGSjf0vCvWZLTmxwBBXVGG1NO2D+hoIQ6IHmrKrciJDfgxIBGbPId12E//pUjOiyHydCGtFyQG3kWTcc4ro1U7vPAUU4TAxJQAAAABJRU5ErkJggg=="
+            style="cursor:pointer;" /></label>
+        <input type="file" id="imgFile" style="display:none;" />
+
+        <label for="mainFile"><img class="intLink" title="Load a file"
+            src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABIAAAASCAMAAABhEH5lAAAATlBMVEUAAAAAAAD19fVcXFwbGxsTExP8/PzT09NxcXFaWlo4ODg1NTUEBAT5+fnw8PDr6+vU1NTIyMi+vr6Xl5dsbGxnZ2dXV1dISEghISEMDAw0f0rSAAAAAXRSTlMAQObYZgAAAFBJREFUGNO9yEkOgCAQBMBmUxDc9/9/VJ2EjgkHb9axcJuceqQRtMq4aAdWkDr6xtW5jJRFx2MBu23fdS7eG6Vz0U8VytrKmhMnVoDQlOfbBQLIAl4FF2fyAAAAAElFTkSuQmCC"
+            style="cursor:pointer;" /></label>
+        <input type="file" id="mainFile" style="display:none;" />
+
+        <!-- Added Download All -->
+        <img id="downloadAllBtn" class="intLink" title="Download all files"
+          src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABYAAAAWCAMAAADzapwJAAAAdVBMVEUAAAAfHx9GRkYAAAAPDw9aWlr+/v739/fHx8dpaWkEBAT7+/v29vby8vLu7u7Z2dm1tbWysrKtra2qqqqMjIxWVlZJSUk1NTUUFBQJCQnz8/Pq6uri4uLMzMzKysq+vr69vb2NjY16enpvb29hYWE9PT0rKytDpsqlAAAAAXRSTlMAQObYZgAAAHdJREFUGNO1zscOgCAMgGG0iIp77z3e/xEV05CoJJ78D9B86aHkO6bUuXBUnFWuig1q/sTs5PclyR7YpZ+vD+4rrSg3mJ7rFgWA9EZhcPmlbuyh1mCLr0vEO0CI7HPB2AgRTh43mORYMstBk3HaEqxZdFlmkZ87AICHBL2TAUCPAAAAAElFTkSuQmCC"
+          style="cursor:pointer;" />
+      </div>
+    </div>
+
+    <!-- SHARED: The Unified Box -->
+    <div id="composeBox" class="cssbox" contenteditable="true" placeholder="Type or decrypt here..."
+      style="width: 100%; min-height: 150px; height: 100px; border: 1px solid #ccc; background: white; overflow: auto; display: block; padding: 5px; box-sizing: border-box; outline: none; resize: vertical;">
+    </div>
+
+    <!-- DECRYPT ONLY: Decrypt Actions -->
+    <div class="decrypt-only" style="display: flex; gap: 5px; margin-top: 10px;">
+      <button id="do-decrypt-selection" style="flex: 1;">Decrypt Content</button>
+      <button id="decoyDecryptBtn" class="decrypt-only" style="flex: 1; background-color: #607d8b; color: white;">Check
+        for Hidden
+        Message</button>
+    </div>
+
+    <!-- ENCRYPT ONLY: Encrypt Actions -->
+    <div class="encrypt-only" style="display: flex; gap: 5px; margin-top: 10px;">
+      <button id="encryptBtn" style="flex: 1;">Encrypt</button>
+      <button id="encryptToFileBtn" style="flex: 1; background-color: #f0f8ff; border: 1px solid #0066cc;">Encrypt to
+        File</button>
+    </div>
+
+    <!-- ENCRYPT ONLY: Decoy Container -->
+    <div id="decoy-container" class="encrypt-only"
+      style="margin-top: 12px; padding: 8px; border: 1px solid #eee; border-radius: 4px; background: #f9f9f9;">
+      <label style="font-weight: bold; font-size: 13px; cursor: pointer;">
+        <input type="checkbox" id="decoyModeToggle"> Include Hidden Decoy Message
+      </label>
+      <div id="decoy-input-area" style="display: none; margin-top: 8px;">
+        <textarea id="decoyMessageArea" placeholder="Enter the HIDDEN message here..." rows="2"
+          style="width: 100%; font-size: 12px; padding: 4px; border: 1px solid #ccc;"></textarea>
+        <div style="font-size: 11px; color: #666; text-align: right;"><span id="decoyByteCount">0</span> / 75 bytes
+        </div>
+      </div>
+    </div>
+
+    <!-- Hidden file input for manual PLK loading -->
+    <input type="file" id="plkFileInput" accept=".plk" style="display:none;" />
+  </div>
+
+  <div id="dropTargetCard" class="card">
+    <div id="dropTarget" class="drop-target">
+      Drop files here to encrypt or decrypt
+    </div>
+  </div>
+
+  <!-- Libraries and Scripts -->
+  <script src="lib/nacl-fast.js"></script>
+  <script src="lib/nacl-util.js"></script>
+  <script src="lib/ed2curve.js"></script>
+  <script src="lib/scrypt-async.js"></script>
+  <script src="lib/lz-string.js"></script>
+  <script src="src/dictionary_en.js"></script>
+  <!--script src="src/crypto.js"></script-->
+  <script src="sidepanel_UI.js"></script>
+  <script src="directory_editor.js"></script>
+  <script src="crypto-common.js"></script>
+  <script src="sidepanel_notes.js"></script>
+  <script src="sidepanel_passwords.js"></script>
+  <script src="sidepanel_decrypt.js"></script>
+  <script src="sidepanel_encrypt.js"></script>
+</body>
+
+</html>

@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "PassLok Secure Agent",
+  "version": "0.1",
+  "permissions": ["sidePanel", "storage", "tabs", "activeTab"],
+  "background": { "service_worker": "background.js" },
+  "side_panel": { "default_path": "sidepanel.html" },
+  "content_scripts": [{
+    "matches": ["<all_urls>"],
+    "js": ["agent-core.js"]
+  }],
+  "web_accessible_resources": [{
+    "resources": ["help_synthesis.js", "help_encrypt.js", "help_decrypt.js", "help_directory.html", "help_general.js"],
+    "matches": ["<all_urls>"]
+  }]
+}
