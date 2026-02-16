@@ -418,6 +418,7 @@ function loadHostData(host) {
 /**
  * Updates Synth-related UI elements.
  */
+/*
 function updateSynthUI(synthData) {
   document.getElementById("serial").value = synthData.serial || "";
   document.getElementById("allowed-chars").value = synthData.allowedChars || "";
@@ -427,12 +428,13 @@ function updateSynthUI(synthData) {
 /**
  * Updates Crypt-related UI elements.
  */
+/*
 function updateCryptUI(cryptData) {
   const emailField = document.getElementById("user-email");
   if (emailField) {
     emailField.value = cryptData.email || "";
   }
-}
+}*/
 
 function updateRecipientStatus() {
   const lockList = document.getElementById('lockList');
@@ -566,10 +568,10 @@ window.addEventListener("closeDirectory", () => {
   // Go back to previous state
   updateUI(lastState);
 });
-
+/*
 window.updateLockList = function() {
     const lockList = document.getElementById('lockList');
-    const emailDisplay = document.getElementById('decrypt-email-display');
+//    const emailDisplay = document.getElementById('decrypt-email-display');
     if (!lockList) return;
 
     // Use currentHost directly as per your preference
@@ -590,14 +592,14 @@ window.updateLockList = function() {
             if (result[host].crypt.email) myEmail = result[host].crypt.email;
             if (result[host].crypt.lock) myLock = result[host].crypt.lock;
         }
-
+/*
         if (emailDisplay) {
             emailDisplay.textContent = myEmail ? `Sender: ${myEmail}` : "Sender: (Not set)";
             console.log("Populated Sender Email:", myEmail);
         }
-
+*/
         // 2. Populate Recipients List
-        lockList.innerHTML = '';
+/*        lockList.innerHTML = '';
 
         // Add "Me" first
         if (myLock) {
@@ -622,6 +624,66 @@ window.updateLockList = function() {
         
         console.log(`LockList updated. Entries: ${entryCount}, Me Found: ${!!myLock}`);
     });
+};*/
+
+window.updateLockList = function() {
+    const lockList = document.getElementById('lockList');
+    if (!lockList) return;
+
+    // 1. Save current selections
+    const selectedValues = Array.from(lockList.selectedOptions).map(o => o.value);
+
+    chrome.storage.sync.get(['locDir', currentHost], (result) => {
+        const locDir = result.locDir || {};
+        lockList.innerHTML = '';
+
+        // 2. Add "Me" option at the top
+        const meOption = document.createElement('option');
+        meOption.value = "me";
+        meOption.textContent = "Me";
+        if (selectedValues.includes("me")) meOption.selected = true;
+        lockList.appendChild(meOption);
+
+        // 3. Filter and Categorize
+        const groups = [];
+        const individuals = [];
+
+        for (const [name, value] of Object.entries(locDir)) {
+            // Skip legacy locks starting with $
+            if (name.startsWith('$')) continue;
+
+            const valString = Array.isArray(value) ? value[0] : value;
+            const isGroup = typeof valString === 'string' && valString.includes(',');
+            
+            const entry = { name, value: valString };
+
+            if (isGroup) {
+                groups.push(entry);
+            } else {
+                individuals.push(entry);
+            }
+        }
+
+        // 4. Sort Alphabetically and Append Groups (bracketed in =)
+        groups.sort((a, b) => a.name.localeCompare(b.name));
+        groups.forEach(group => {
+            const option = document.createElement('option');
+            option.value = group.value;
+            option.textContent = `=${group.name}=`;
+            if (selectedValues.includes(group.value)) option.selected = true;
+            lockList.appendChild(option);
+        });
+
+        // 5. Sort Alphabetically and Append Individuals
+        individuals.sort((a, b) => a.name.localeCompare(b.name));
+        individuals.forEach(indiv => {
+            const option = document.createElement('option');
+            option.value = indiv.value;
+            option.textContent = indiv.name;
+            if (selectedValues.includes(indiv.value)) option.selected = true;
+            lockList.appendChild(option);
+        });
+    });
 };
 
 window.updateLockList = updateLockList; // Expose globally if needed
@@ -645,6 +707,7 @@ function updateRecipientStatus() {
 }
 
 document.getElementById("open-directory-btn").addEventListener("click", () => {
+  DirectoryEditor.setMode("locDir"); // Force global directory mode
   DirectoryEditor.open();
 });
 

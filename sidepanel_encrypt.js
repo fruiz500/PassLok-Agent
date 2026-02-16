@@ -361,11 +361,8 @@ async function coreEncrypt(msgUint8, settings) {
       const nonce15 = nacl.randomBytes(15);
       const nonce24 = makeNonce24(nonce15);
 
-      // NEW: Handle padding/decoy logic
       let padding;
       if (settings.decoyText && settings.decoyText.length > 0) {
-        // We use the Folder Key itself as the 'mySecretKey' for the decoy prompt context
-        // or simply trigger the prompt inside decoyEncrypt
         padding = decoyEncrypt(settings.decoyText);
       } else {
         padding = nacl.randomBytes(100);
@@ -376,14 +373,13 @@ async function coreEncrypt(msgUint8, settings) {
       modeLabel = "FOLDER";
       suppressLock = true;
     } else {
-      //2. If no Folder Key, fall back to Invitation or symmetric mode
       const result = await handleInvitationEncryption(msgUint8, null);
       if (!result) return null;
       finalBin = result.finalBin;
       modeLabel = result.modeLabel;
     }
   }
-  // 3. Signed / Anonymous Path
+  // 2. Signed / Anonymous Path
   else {
     modeLabel = settings.isAnon ? "ANONYMOUS" : "SIGNED";
     const storage = await chrome.storage.sync.get([currentHost, 'locDir']);
@@ -407,53 +403,60 @@ async function coreEncrypt(msgUint8, settings) {
     const nonce15 = nacl.randomBytes(15);
     const nonce24 = makeNonce24(nonce15);
 
-    // --- Inside coreEncrypt, replace the recipient loop section with this: ---
+    // --- 1. Resolve everything into a unique set of 50-char LOCK STRINGS ---
+    const finalLocks = new Set();
 
-    const recipientSlots = [];
-    const processedLocks = new Set();
-
-    const addRecipient = (lockB36) => {
-      if (typeof lockB36 === 'string' && lockB36.trim() && !lockB36.includes(',')) {
-        if (!processedLocks.has(lockB36)) {
-
-          // Convert Base36 string from storage to Uint8Array for crypto
-          const recipientUint8 = ezLockToUint8(lockB36);
-
-          if (recipientUint8) {
-            const slot = encryptForRecipientWithLock(recipientUint8, nonce24, msgKey, mySecretKey);
-            if (slot) {
-              recipientSlots.push(slot);
-              processedLocks.add(lockB36);
-            }
-          }
+   const resolveToLocks = (input) => {
+      if (!input || typeof input !== 'string') return;
+      const trimmed = input.trim();
+      
+      // SPECIAL CASE: If it's literally "me", use the site-specific lock
+      if (trimmed.toLowerCase() === 'me') {
+        const myLock = base36Lock || myStoredLock;
+        if (myLock && isStrictLock(myLock)) {
+          finalLocks.add(myLock);
         }
+        return;
+      }
+
+      // A. If it's a 50-char PassLok lock string, add it
+      if (isStrictLock(trimmed)) {
+        finalLocks.add(trimmed);
+        return;
+      }
+
+      // B. If it's a comma-separated list, split and recurse
+      if (trimmed.includes(',')) {
+        trimmed.split(',').forEach(item => resolveToLocks(item.trim()));
+        return;
+      }
+
+      // C. Otherwise, it's a Name/Key in locDir
+      const cleanName = trimmed.replace(/^=|=$/g, '');
+      const entry = locDir[cleanName];
+      const value = Array.isArray(entry) ? entry[0] : entry;
+
+      if (value) {
+        resolveToLocks(value); // Recurse to handle if value is a lock or a group
       }
     };
 
-    for (const name of settings.selectedRecipients) {
-      if (name === "me") {
-        addRecipient(base36Lock || myStoredLock);
+    for (const sel of settings.selectedRecipients) {
+      if (sel.toLowerCase() === "me") {
+        const myLock = base36Lock || myStoredLock;
+        if (myLock && isStrictLock(myLock)) finalLocks.add(myLock);
         continue;
       }
+      resolveToLocks(sel);
+    }
 
-      // 1. Strip the = signs to get the actual key in locDir
-      const actualKey = name.replace(/^=|=$/g, '');
-      const rawValue = locDir[actualKey]?.[0] || "";
-
-      // 2. Check if this is a group (value contains a comma)
-      if (typeof rawValue === 'string' && rawValue.includes(',')) {
-        const memberNames = rawValue.split(',').map(n => n.trim()).filter(n => n);
-
-        memberNames.forEach(memberName => {
-          const memberLock = locDir[memberName]?.[0];
-          if (memberLock) {
-            addRecipient(memberLock);
-          }
-        });
-      }
-      else {
-        // 3. It's an individual
-        addRecipient(rawValue);
+    // --- 2. Convert the unique Locks into encrypted Slots ---
+    const recipientSlots = [];
+    for (const lockB36 of finalLocks) {
+      const recipientUint8 = ezLockToUint8(lockB36);
+      if (recipientUint8) {
+        const slot = encryptForRecipientWithLock(recipientUint8, nonce24, msgKey, mySecretKey);
+        if (slot) recipientSlots.push(slot);
       }
     }
 
@@ -473,6 +476,14 @@ async function coreEncrypt(msgUint8, settings) {
 
   return { finalBin, modeLabel, base36Lock, suppressLock };
 }
+
+const isStrictLock = (str) => {
+  if (typeof str !== 'string') return false;
+  const trimmed = str.trim();
+  // Exactly 50 characters. 
+  // Set: 0-9, a-k, m-z (lowercase), and L (uppercase)
+  return /^[0-9a-kLm-z]{50}$/.test(trimmed);
+};
 
 async function encryptToFile() {
   const statusMsg = document.getElementById('encryptMsg');

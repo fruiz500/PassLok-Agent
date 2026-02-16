@@ -210,7 +210,19 @@ async function continueDecrypt(input, masterPwd, myEmail) {
 
   } catch (e) {
     console.error("Decryption error:", e);
-    reportCryptoFailure(e.message);
+
+    // Friendly message for known error
+    let userMsg = e.message;
+    if (e.message.includes("No matching sender Lock found")) {
+      userMsg = "Decryption failed: This message was not encrypted for you.";
+    }
+
+    reportCryptoFailure(userMsg);
+
+    // Optionally, show master password section if relevant
+    if (e.message.includes("Master password") || e.message.includes("Lock")) {
+      document.getElementById('master-password-section')?.classList.remove('hidden');
+    }
   }
 }
 
@@ -373,30 +385,30 @@ async function handleSignedMode(cipherInput, parsed, commonData) {
 
     const storageData = await chrome.storage.sync.get(storageKeys);
     const locDir = storageData.locDir || {};
-    
+
     let locksToTry = [];
-    
+
     // Correctly navigate the nested structure: host -> crypt -> lock
     if (host && storageData[host] && storageData[host].crypt && storageData[host].crypt.lock) {
-        locksToTry.push({ 
-            name: "Me", 
-            lockStr: storageData[host].crypt.lock 
-        });
+      locksToTry.push({
+        name: "Me",
+        lockStr: storageData[host].crypt.lock
+      });
     }
-    
+
     // Add locDir entries
     for (const [name, data] of Object.entries(locDir)) {
-        locksToTry.push({ 
-            name: name, 
-            lockStr: Array.isArray(data) ? data[0] : data 
-        });
+      locksToTry.push({
+        name: name,
+        lockStr: Array.isArray(data) ? data[0] : data
+      });
     }
 
     // Now loop through the prioritized list
     for (const entry of locksToTry) {
-        try {
-            const senderLock = ezLockToUint8(entry.lockStr);
-            if (!senderLock) continue;
+      try {
+        const senderLock = ezLockToUint8(entry.lockStr);
+        if (!senderLock) continue;
 
         const sharedKey = makeShared(ed2curve.convertPublicKey(senderLock), myKey);
         const idTag = nacl.secretbox(stuffForId, nonce24, sharedKey).slice(0, 8);
@@ -405,13 +417,13 @@ async function handleSignedMode(cipherInput, parsed, commonData) {
         if (msgKeycipher) {
           const msgKey = nacl.secretbox.open(msgKeycipher, nonce24, sharedKey);
           if (msgKey) {
-            return { 
-                success: true, 
-                messageKey: msgKey, 
-                nonce: nonce24, 
-                padding: padding, 
-                cipher, 
-                senderName: entry.name 
+            return {
+              success: true,
+              messageKey: msgKey,
+              nonce: nonce24,
+              padding: padding,
+              cipher,
+              senderName: entry.name
             };
           }
         }
