@@ -224,18 +224,18 @@ function updateUI(state) {
   if (state) lastState = state;
   const s = lastState;
 
-  if (state.host) {
-  currentHost = getRegisteredDomain(state.host);
-  // Ensure the global window object is also updated if scripts are mixed
-  window.currentHost = currentHost; 
-  
-  loadHostData(currentHost);
-  
-  // Trigger the list update now that we have a host
-  if (typeof updateLockList === 'function') {
-    updateLockList();
+  if (s && s.host) {
+    currentHost = getRegisteredDomain(s.host);
+    // Ensure the global window object is also updated if scripts are mixed
+    window.currentHost = currentHost;
+
+    loadHostData(currentHost);
+
+    // Trigger the list update now that we have a host
+    if (typeof updateLockList === 'function') {
+      updateLockList();
+    }
   }
-}
 
   // 1. Map agent-core.js keys to our priority logic
   const hasPasswords = s.hasPasswords || (s.passwordCount > 0);
@@ -315,10 +315,10 @@ function updateUI(state) {
   }
 
   if (cardCrypto && !cardCrypto.classList.contains('hidden')) {
-  if (window.updateLockList) {
-    setTimeout(() => window.updateLockList(), 100); // Delay to ensure data is ready
+    if (window.updateLockList) {
+      setTimeout(() => window.updateLockList(), 100); // Delay to ensure data is ready
+    }
   }
-}
 
   if (masterSection) {
     masterSection.classList.remove('hidden');
@@ -564,9 +564,24 @@ function openDirectory() {
 setupCryptoCardListeners();  //formatting buttons etc.
 
 // Listen for close event
+// In sidepanel_UI.js around line 567
 window.addEventListener("closeDirectory", () => {
-  // Go back to previous state
-  updateUI(lastState);
+  // Ensure directory card is hidden (redundant but safe)
+  const dirCard = document.getElementById('directory-card');
+  if (dirCard) dirCard.classList.add('hidden');
+
+  // If we're in manual file mode, ensure the crypto UI is visible
+  if (window.isManualFileMode) {
+    const cryptoCard = document.getElementById('card-crypto');
+    if (cryptoCard) {
+      cryptoCard.classList.remove('hidden');
+      // Re-run updateUI to ensure all elements are in the right state
+      setTimeout(() => updateUI(lastState), 0);
+    }
+  } else {
+    // Normal state restoration
+    updateUI(lastState);
+  }
 });
 /*
 window.updateLockList = function() {
@@ -598,7 +613,7 @@ window.updateLockList = function() {
             console.log("Populated Sender Email:", myEmail);
         }
 */
-        // 2. Populate Recipients List
+// 2. Populate Recipients List
 /*        lockList.innerHTML = '';
 
         // Add "Me" first
@@ -626,64 +641,64 @@ window.updateLockList = function() {
     });
 };*/
 
-window.updateLockList = function() {
-    const lockList = document.getElementById('lockList');
-    if (!lockList) return;
+window.updateLockList = function () {
+  const lockList = document.getElementById('lockList');
+  if (!lockList) return;
 
-    // 1. Save current selections
-    const selectedValues = Array.from(lockList.selectedOptions).map(o => o.value);
+  // 1. Save current selections
+  const selectedValues = Array.from(lockList.selectedOptions).map(o => o.value);
 
-    chrome.storage.sync.get(['locDir', currentHost], (result) => {
-        const locDir = result.locDir || {};
-        lockList.innerHTML = '';
+  chrome.storage.sync.get(['locDir', currentHost], (result) => {
+    const locDir = result.locDir || {};
+    lockList.innerHTML = '';
 
-        // 2. Add "Me" option at the top
-        const meOption = document.createElement('option');
-        meOption.value = "me";
-        meOption.textContent = "Me";
-        if (selectedValues.includes("me")) meOption.selected = true;
-        lockList.appendChild(meOption);
+    // 2. Add "Me" option at the top
+    const meOption = document.createElement('option');
+    meOption.value = "me";
+    meOption.textContent = "Me";
+    if (selectedValues.includes("me")) meOption.selected = true;
+    lockList.appendChild(meOption);
 
-        // 3. Filter and Categorize
-        const groups = [];
-        const individuals = [];
+    // 3. Filter and Categorize
+    const groups = [];
+    const individuals = [];
 
-        for (const [name, value] of Object.entries(locDir)) {
-            // Skip legacy locks starting with $
-            if (name.startsWith('$')) continue;
+    for (const [name, value] of Object.entries(locDir)) {
+      // Skip legacy locks starting with $
+      if (name.startsWith('$')) continue;
 
-            const valString = Array.isArray(value) ? value[0] : value;
-            const isGroup = typeof valString === 'string' && valString.includes(',');
-            
-            const entry = { name, value: valString };
+      const valString = Array.isArray(value) ? value[0] : value;
+      const isGroup = typeof valString === 'string' && valString.includes(',');
 
-            if (isGroup) {
-                groups.push(entry);
-            } else {
-                individuals.push(entry);
-            }
-        }
+      const entry = { name, value: valString };
 
-        // 4. Sort Alphabetically and Append Groups (bracketed in =)
-        groups.sort((a, b) => a.name.localeCompare(b.name));
-        groups.forEach(group => {
-            const option = document.createElement('option');
-            option.value = group.value;
-            option.textContent = `=${group.name}=`;
-            if (selectedValues.includes(group.value)) option.selected = true;
-            lockList.appendChild(option);
-        });
+      if (isGroup) {
+        groups.push(entry);
+      } else {
+        individuals.push(entry);
+      }
+    }
 
-        // 5. Sort Alphabetically and Append Individuals
-        individuals.sort((a, b) => a.name.localeCompare(b.name));
-        individuals.forEach(indiv => {
-            const option = document.createElement('option');
-            option.value = indiv.value;
-            option.textContent = indiv.name;
-            if (selectedValues.includes(indiv.value)) option.selected = true;
-            lockList.appendChild(option);
-        });
+    // 4. Sort Alphabetically and Append Groups (bracketed in =)
+    groups.sort((a, b) => a.name.localeCompare(b.name));
+    groups.forEach(group => {
+      const option = document.createElement('option');
+      option.value = group.value;
+      option.textContent = `=${group.name}=`;
+      if (selectedValues.includes(group.value)) option.selected = true;
+      lockList.appendChild(option);
     });
+
+    // 5. Sort Alphabetically and Append Individuals
+    individuals.sort((a, b) => a.name.localeCompare(b.name));
+    individuals.forEach(indiv => {
+      const option = document.createElement('option');
+      option.value = indiv.value;
+      option.textContent = indiv.name;
+      if (selectedValues.includes(indiv.value)) option.selected = true;
+      lockList.appendChild(option);
+    });
+  });
 };
 
 window.updateLockList = updateLockList; // Expose globally if needed
@@ -1118,17 +1133,11 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   const closeDirBtn = document.getElementById('close-directory');
   if (closeDirBtn) {
-    closeDirBtn.addEventListener('click', () => {
-      // 1. Hide the directory card
-      const dirCard = document.getElementById("directory-card");
-      if (dirCard) dirCard.classList.add("hidden");
-
-      // 2. Show the Unified Crypto Card
-      if (cards.crypto) {
-        cards.crypto.classList.remove("hidden");
-      }
-    });
-  }
+  closeDirBtn.addEventListener('click', () => {
+    // Delegate to the DirectoryEditor's close method
+    DirectoryEditor.close();
+  });
+}
 });
 
 document.getElementById('help-btn')?.addEventListener('click', () => {

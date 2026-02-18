@@ -174,34 +174,53 @@ document
     renderDirectory();
   });
 
-let previousCardId = null;
+//let previousCardId = null;
+
+// 1. Define the variable outside the object
+let previousVisibleCards = [];
 
 window.DirectoryEditor = {
   renderDirectory,
   setMode,
   setHost,
-  open: () => {
-    // Save currently visible card
-    const cards = document.querySelectorAll(".card");
-    previousCardId = null;
-    cards.forEach((card) => {
-      if (!card.classList.contains("hidden") && card.id !== "directory-card") {
-        previousCardId = card.id;
-      }
-      card.classList.add("hidden");
-    });
-    const masterSection = document.getElementById("master-password-section");
-    if (masterSection) masterSection.classList.add("hidden");
-    document.getElementById("directory-card").classList.remove("hidden");
-    renderDirectory();
-  },
-  close: () => {
-    document.getElementById("directory-card").classList.add("hidden");
-    if (previousCardId) {
-      const prevCard = document.getElementById(previousCardId);
-      if (prevCard) prevCard.classList.remove("hidden");
+  // In directory_editor.js
+open: () => {
+  const cards = document.querySelectorAll(".card");
+  previousVisibleCards = [];
+  cards.forEach((card) => {
+    // Check if it's visible (not hidden)
+    if (window.getComputedStyle(card).display !== "none" && !card.classList.contains("hidden")) {
+      previousVisibleCards.push(card.id);
     }
-  },
+    card.classList.add("hidden");
+  });
+  
+  console.log("Saved visible cards:", previousVisibleCards); // TEST 1
+
+  const masterSection = document.getElementById("master-password-section");
+  if (masterSection && !masterSection.classList.contains("hidden")) {
+    previousVisibleCards.push("master-password-section");
+  }
+  if (masterSection) masterSection.classList.add("hidden");
+
+  document.getElementById("directory-card").classList.remove("hidden");
+  renderDirectory();
+},
+
+close: () => {
+  console.log("Restoring cards:", previousVisibleCards); // TEST 2
+  document.getElementById("directory-card").classList.add("hidden");
+  
+  previousVisibleCards.forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) {
+        el.classList.remove("hidden");
+        console.log("Restored:", id); // TEST 3
+    }
+  });
+
+  window.dispatchEvent(new CustomEvent("closeDirectory"));
+},
 };
 
 function displaySync() {
