@@ -22,6 +22,7 @@ function extractEmbeddedLock(text) {
   };
 }
 
+/*
 function renderDetectionList(items) {
   const listEl = document.getElementById("crypto-detection-list");
   if (!listEl) return;
@@ -67,9 +68,10 @@ function renderDetectionList(items) {
 
     listEl.appendChild(itemDiv);
   });
-}
+}*/
+
 // 3. Decrypt Button Listener
-document.getElementById("do-decrypt-selection").addEventListener("click", () => {
+function doDecryptSelection() {
   // 1. Read from the unified box
   const box = document.getElementById("composeBox");
   const blobText = box.textContent.trim();
@@ -106,7 +108,7 @@ document.getElementById("do-decrypt-selection").addEventListener("click", () => 
   };
 
   decryptUniversal(blob);
-});
+}
 
 // ==== UNIVERSAL DECRYPTION ====
 
@@ -595,7 +597,7 @@ function promptForSenderName(theirLockB36) {
 }
 
 // 2. The Save Button Listener
-document.getElementById("save-sender-lock").addEventListener("click", () => {
+  function saveSenderLock() {
   const name = document.getElementById("new-sender-name").value.trim();
   if (!name) {
     alert("Please enter a name.");
@@ -617,28 +619,7 @@ document.getElementById("save-sender-lock").addEventListener("click", () => {
       pendingLock = null;
     });
   });
-});
-
-// 3. The Ignore Button Listener
-document.getElementById("ignore-sender-lock").addEventListener("click", () => {
-  document.getElementById("sender-prompt-overlay").classList.add("hidden");
-  pendingLock = null;
-});
-
-// Save email when changed inline to host.crypt
-document.getElementById("user-email").addEventListener("change", (e) => {
-  const email = e.target.value.trim();
-  if (email.includes("@") && currentHost) {
-    chrome.storage.sync.get([currentHost], (result) => {
-      const hostData = result[currentHost] || {};
-      hostData.crypt = hostData.crypt || {};
-      hostData.crypt.email = email;
-      chrome.storage.sync.set({ [currentHost]: hostData }, () => {
-        setStatus("Email updated for this host");
-      });
-    });
-  }
-});
+}
 
 // 1. New Validation Function
 async function validateAndUpdateMeLock(email, generatedLock, host) {
@@ -723,10 +704,7 @@ function doDecoyDecrypt() {
   }
 }
 
-// Event Listener
-document.getElementById('decoyDecryptBtn').addEventListener('click', doDecoyDecrypt);
-
-
+// Entry point for file decryption
 async function startDecryption(fileBytes) {
   const statusMsg = document.getElementById('decryptMsg');
   const masterPwdField = document.getElementById('m-pass');

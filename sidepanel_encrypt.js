@@ -565,8 +565,3 @@ async function encryptToFile() {
     }
   }
 }
-
-// Event Listeners
-document.getElementById('encryptBtn')?.addEventListener('click', startEncryption);
-
-document.getElementById('encryptToFileBtn').addEventListener('click', encryptToFile);

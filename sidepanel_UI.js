@@ -126,103 +126,18 @@ document.addEventListener('selectionchange', () => {
 
 let masterPwdTimeout = null;
 
-/*
-function updateUI(state) {
-  // 1. Handle the Change Password button visibility
-  const changeBtn = document.getElementById('change-synth');
-  if (changeBtn) {
-    // Show if 2+ password fields are detected
-    if (state.hasPasswords && state.passwordCount >= 2) {
-      changeBtn.style.display = 'inline-block';
-    } else {
-      changeBtn.style.display = 'none';
-    }
-  }
+async function updateUI(state) {
 
-  // If the core state is identical to the last one, ignore the message
-  if (lastState &&
-    lastState.hasLargeInputField === state.hasLargeInputField &&
-    lastState.hasPasswords === state.hasPasswords &&
-    lastState.hasCrypto === state.hasCrypto &&
-    lastState.host === state.host) {
-    return;
-  }
-
-  lastState = { ...state };
-
-  // 1. Normalize Host and Load Data
-  if (state.host) {
-    currentHost = getRegisteredDomain(state.host);
-    loadHostData(currentHost);
-  }
-
-  // 2. Hide all cards first
-  Object.values(cards).forEach((c) => {
-    if (c) c.classList.add("hidden");
-  });
-
-  let active = false;
-
-  // 3. Priority 1: Password Synthesis (Synth Card)
-  if (state.hasPasswords) {
-    masterPasswordContext = "synth";
-    showCard(cards.synth);
-    showCard(cards.masterSection);
-    showCard(cards.synthExtra);
-    if (typeof DirectoryEditor !== "undefined") DirectoryEditor.setMode("synth");
-    active = true;
-  }
-  // 4. Priority 2: Large Input Field Detected (Encrypt Mode)
-  else if (state.hasLargeInputField) {
-    masterPasswordContext = "encrypt";
-    setCryptoMode("encrypt"); // Unified Card in Encrypt mode
-    showCard(cards.masterSection);
-
-    if (typeof DirectoryEditor !== "undefined") {
-      DirectoryEditor.setMode("encrypt");
-    }
-    if (typeof renderDirectory === 'function') {
-      renderDirectory();
-    }
-    active = true;
-  }
-
-  // 5. Priority 3: Encrypted Content (Decrypt Mode)
-  else if (state.hasCrypto) {
-    masterPasswordContext = "decrypt";
-    setCryptoMode("decrypt"); // Unified Card in Decrypt mode
-
-    if (state.needPasswordInput) {
-      showCard(cards.masterSection);
-      showCard(cards.decryptEmail);
-    } else {
-      hideCard(cards.masterSection);
-      hideCard(cards.decryptEmail);
-    }
-
-    if (typeof DirectoryEditor !== "undefined") {
-      DirectoryEditor.setMode("decrypt");
-    }
-    active = true;
-  }
-
-  // 6. Fallback: Notes (no passwords, no crypto, no large input)
-  if (!active) {
-    masterPasswordContext = "notes";
-    showCard(cards.note);
-
-    if (typeof DirectoryEditor !== "undefined") {
-      DirectoryEditor.setMode("notes");
-    }
-
-    enterNotesMode(currentHost);
-  }
-}
-*/
-
-function updateUI(state) {
   if (state) lastState = state;
   const s = lastState;
+
+  // Get the current active tab ID from Chrome
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const currentTabId = tab?.id;
+
+// Check if THIS specific tab is the one that requested manual mode
+  const isManualForThisTab = (window.manualModeTabId === currentTabId);
+  window.isManualForThisTab = isManualForThisTab; // Expose globally for other scripts
 
   if (s && s.host) {
     currentHost = getRegisteredDomain(s.host);
@@ -251,6 +166,7 @@ function updateUI(state) {
   const cardCrypto = document.getElementById('card-crypto');
   const cardNote = document.getElementById('card-note');
   const dropTarget = document.getElementById('dropTargetCard');
+  const closeManualFiles = document.getElementById('close-manual-files');
   const composeBox = document.getElementById('composeBox');
   const toolBar = document.getElementById('toolBar');
   const decoyContainer = document.getElementById('decoy-container');
@@ -260,47 +176,16 @@ function updateUI(state) {
   [masterSection, cardSynth, cardCrypto, cardNote, dropTarget, composeBox, toolBar, decoyContainer].forEach(el => el?.classList.add('hidden'));
   if (actionButtons) actionButtons.classList.remove('hidden');
 
-  // Priority 1: Passwords
-  if (hasPasswords) {
-    masterSection.classList.remove('hidden');
-    emailDisplay.classList.add('hidden');
-    cardSynth.classList.remove('hidden');
-    return;
-  }
-
-  // Priority 2: Text Areas (Compose)
-  if (hasTextAreas) {
-    masterSection.classList.remove('hidden');
-    emailDisplay.classList.remove('hidden');
-    synthExtra.classList.add('hidden');
-    cardCrypto.classList.remove('hidden');
-    cardCrypto.setAttribute('data-mode', 'encrypt');
-    composeBox.classList.remove('hidden');
-    toolBar.classList.remove('hidden');
-    decoyContainer.classList.remove('hidden');
-    dropTarget.classList.remove('hidden');
-    return;
-  }
-
-  // Priority 3: Base64 Blobs (Encrypted Content)
-  if (hasBlobs) {
-    masterSection.classList.remove('hidden');
-    emailDisplay.classList.remove('hidden');
-    synthExtra.classList.add('hidden');
-    cardCrypto.classList.remove('hidden');
-    cardCrypto.setAttribute('data-mode', 'decrypt');
-    composeBox.classList.remove('hidden');
-    toolBar.classList.remove('hidden');
-    decoyContainer.classList.add('hidden');
-    dropTarget.classList.remove('hidden');
-    return;
-  }
-
   // Priority 4: Manual File Mode Override
-  if (window.isManualFileMode) {
+  if (isManualForThisTab) {
+
+    masterPasswordContext = "encrypt";
     masterSection.classList.remove('hidden');
     emailDisplay.classList.remove('hidden');
-    synthExtra.classList.add('hidden');
+
+    closeManualFiles.classList.remove('hidden');
+
+    //    synthExtra.classList.add('hidden');
     cardCrypto.classList.remove('hidden');
     cardCrypto.setAttribute('data-mode', 'encrypt');
 
@@ -320,42 +205,72 @@ function updateUI(state) {
     }
   }
 
-  if (masterSection) {
+  // Priority 1: Passwords
+  if (hasPasswords) {
+    masterPasswordContext = "synth"; // Set context
     masterSection.classList.remove('hidden');
-    // Show all direct children or specific sub-elements
-    masterSection.querySelectorAll('*').forEach(el => {
-      if (el.id !== 'decrypt-email-display') { // Don't show email display in password mode
-        el.classList.remove('hidden');
-      }
-    });
+    cardSynth.classList.remove('hidden');
+    // Remove return; so it reaches the bottom logic
+  }
+
+  // Priority 2: Text Areas (Compose)
+  else if (hasTextAreas) {
+    masterPasswordContext = "encrypt"; // Set context
+    masterSection.classList.remove('hidden');
+    cardCrypto.classList.remove('hidden');
+    cardCrypto.setAttribute('data-mode', 'encrypt');
+    composeBox.classList.remove('hidden');
+    toolBar.classList.remove('hidden');
+    decoyContainer.classList.remove('hidden');
+    dropTarget.classList.remove('hidden');
+    closeManualFiles.classList.add('hidden');
+  }
+
+  // Priority 3: Base64 Blobs (Encrypted Content)
+  else if (hasBlobs) {
+    masterPasswordContext = "decrypt"; // Set context
+    masterSection.classList.remove('hidden');
+    cardCrypto.classList.remove('hidden');
+    cardCrypto.setAttribute('data-mode', 'decrypt');
+    composeBox.classList.remove('hidden');
+    toolBar.classList.remove('hidden');
+    dropTarget.classList.remove('hidden');
+    closeManualFiles.classList.add('hidden');
   }
 
   // Priority 5: Default / Notes
-  if (cardNote) {
-    cardNote.classList.remove('hidden');
+  else {
+    masterPasswordContext = "notes"; // Set context
+    showCard(cards.note);
+    enterNotesMode(currentHost);
+  }
 
-    const notesLocked = document.getElementById('notes-locked');
-    const notesEditor = document.getElementById('notes-editor');
+  // Inside updateUI function in sidepanel_UI.js, around line 323
+  if (masterSection) {
+    //  masterSection.classList.remove('hidden');
 
-    if (hasNotes) {
-      if (!hasMaster) {
-        // Locked state
-        notesLocked.classList.remove('hidden');
-        notesEditor.classList.add('hidden');
-        masterSection.classList.remove('hidden');
-        emailDisplay.classList.add('hidden');
-        synthExtra.classList.add('hidden');
-      } else {
-        // Unlocked state (editor)
-        notesLocked.classList.add('hidden');
-        notesEditor.classList.remove('hidden');
-        masterSection.classList.add('hidden');
-      }
-    } else {
-      // No encrypted notes: show editor to create new notes
-      notesLocked.classList.add('hidden');
-      notesEditor.classList.remove('hidden');
-      masterSection.classList.add('hidden');
+    const synthExtra = document.getElementById('synth-extra-inputs');
+    const emailDisplay = document.getElementById('decrypt-email-display');
+
+    // 1. Handle Synthesis Mode
+    if (masterPasswordContext === "synth") {
+      if (synthExtra) synthExtra.classList.remove('hidden');
+      if (emailDisplay) emailDisplay.classList.add('hidden');
+    }
+    // 2. Handle Notes Mode (No email, no synth fields)
+    else if (masterPasswordContext === "notes") {
+      if (synthExtra) synthExtra.classList.add('hidden');
+      if (emailDisplay) emailDisplay.classList.add('hidden');
+    }
+    // 3. Handle Standard Crypto (Show email, hide synth fields)
+    else if (masterPasswordContext === "decrypt" || masterPasswordContext === "encrypt") {
+      if (synthExtra) synthExtra.classList.add('hidden');
+      if (emailDisplay) emailDisplay.classList.remove('hidden');
+    }
+    // 4. Default fallback
+    else {
+      if (synthExtra) synthExtra.classList.add('hidden');
+      if (emailDisplay) emailDisplay.classList.add('hidden');
     }
   }
 }
@@ -414,27 +329,6 @@ function loadHostData(host) {
     }
   });
 }
-
-/**
- * Updates Synth-related UI elements.
- */
-/*
-function updateSynthUI(synthData) {
-  document.getElementById("serial").value = synthData.serial || "";
-  document.getElementById("allowed-chars").value = synthData.allowedChars || "";
-  document.getElementById("length-limit").value = synthData.lengthLimit || "";
-}
-
-/**
- * Updates Crypt-related UI elements.
- */
-/*
-function updateCryptUI(cryptData) {
-  const emailField = document.getElementById("user-email");
-  if (emailField) {
-    emailField.value = cryptData.email || "";
-  }
-}*/
 
 function updateRecipientStatus() {
   const lockList = document.getElementById('lockList');
@@ -563,84 +457,6 @@ function openDirectory() {
 
 setupCryptoCardListeners();  //formatting buttons etc.
 
-// Listen for close event
-// In sidepanel_UI.js around line 567
-window.addEventListener("closeDirectory", () => {
-  // Ensure directory card is hidden (redundant but safe)
-  const dirCard = document.getElementById('directory-card');
-  if (dirCard) dirCard.classList.add('hidden');
-
-  // If we're in manual file mode, ensure the crypto UI is visible
-  if (window.isManualFileMode) {
-    const cryptoCard = document.getElementById('card-crypto');
-    if (cryptoCard) {
-      cryptoCard.classList.remove('hidden');
-      // Re-run updateUI to ensure all elements are in the right state
-      setTimeout(() => updateUI(lastState), 0);
-    }
-  } else {
-    // Normal state restoration
-    updateUI(lastState);
-  }
-});
-/*
-window.updateLockList = function() {
-    const lockList = document.getElementById('lockList');
-//    const emailDisplay = document.getElementById('decrypt-email-display');
-    if (!lockList) return;
-
-    // Use currentHost directly as per your preference
-    const host = currentHost; 
-    const storageKeys = ['locDir', 'myEmail'];
-    if (host) storageKeys.push(host);
-
-    console.log("Updating LockList for host:", host);
-
-    chrome.storage.sync.get(storageKeys, (result) => {
-        const locDir = result.locDir || {};
-        
-        // 1. Handle Sender Email Population
-        let myEmail = result.myEmail || "";
-        let myLock = "";
-
-        if (host && result[host] && result[host].crypt) {
-            if (result[host].crypt.email) myEmail = result[host].crypt.email;
-            if (result[host].crypt.lock) myLock = result[host].crypt.lock;
-        }
-/*
-        if (emailDisplay) {
-            emailDisplay.textContent = myEmail ? `Sender: ${myEmail}` : "Sender: (Not set)";
-            console.log("Populated Sender Email:", myEmail);
-        }
-*/
-// 2. Populate Recipients List
-/*        lockList.innerHTML = '';
-
-        // Add "Me" first
-        if (myLock) {
-            const meOption = document.createElement('option');
-            meOption.value = myLock;
-            meOption.textContent = "Me";
-            lockList.appendChild(meOption);
-        }
-
-        // Add Directory entries
-        let entryCount = 0;
-        for (const [name, value] of Object.entries(locDir)) {
-            const lockValue = Array.isArray(value) ? value[0] : value;
-            if (lockValue && lockValue !== myLock) {
-                const option = document.createElement('option');
-                option.value = lockValue;
-                option.textContent = name;
-                lockList.appendChild(option);
-                entryCount++;
-            }
-        }
-        
-        console.log(`LockList updated. Entries: ${entryCount}, Me Found: ${!!myLock}`);
-    });
-};*/
-
 window.updateLockList = function () {
   const lockList = document.getElementById('lockList');
   if (!lockList) return;
@@ -728,7 +544,7 @@ document.getElementById("open-directory-btn").addEventListener("click", () => {
 
 chrome.runtime.onMessage.addListener((request) => {
   if (request.type === "STATE_UPDATE") {
-    window.isManualFileMode = false; // Reset manual override on new state
+//    window.isManualFileMode = false; // Reset manual override on new state
     updateUI(request.state);
   }
 
@@ -1133,11 +949,11 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   const closeDirBtn = document.getElementById('close-directory');
   if (closeDirBtn) {
-  closeDirBtn.addEventListener('click', () => {
-    // Delegate to the DirectoryEditor's close method
-    DirectoryEditor.close();
-  });
-}
+    closeDirBtn.addEventListener('click', () => {
+      // Delegate to the DirectoryEditor's close method
+      DirectoryEditor.close();
+    });
+  }
 });
 
 document.getElementById('help-btn')?.addEventListener('click', () => {
@@ -1174,8 +990,76 @@ document.getElementById('clear-folder-key')?.addEventListener('click', () => {
 });
 
 // Initialize the flag
-window.isManualFileMode = false;
-document.getElementById('manual-file-mode-btn').addEventListener('click', () => {
-  window.isManualFileMode = true;
+document.getElementById('manual-file-mode-btn').addEventListener('click', async () => {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  window.manualModeTabId = tab.id; // Store the ID of the tab that wants manual mode
   updateUI();
 });
+
+document.getElementById('close-manual-files').addEventListener('click', () => {
+  window.manualModeTabId = null; // Clear the sticky tab ID
+  // Refresh the UI with the last known state from the background
+  updateUI(lastState);
+});
+
+// Listen for close event
+window.addEventListener("closeDirectory", () => {
+  // Ensure directory card is hidden (redundant but safe)
+  const dirCard = document.getElementById('directory-card');
+  if (dirCard) dirCard.classList.add('hidden');
+
+  // If we're in manual file mode, ensure the crypto UI is visible
+  if (isManualForThisTab) {
+    const cryptoCard = document.getElementById('card-crypto');
+    if (cryptoCard) {
+      cryptoCard.classList.remove('hidden');
+      // Re-run updateUI to ensure all elements are in the right state
+      setTimeout(() => updateUI(lastState), 0);
+    }
+  } else {
+    // Normal state restoration
+    updateUI(lastState);
+  }
+});
+
+// Encryption event Listeners
+document.getElementById('encryptBtn').addEventListener('click', startEncryption);
+
+document.getElementById('encryptToFileBtn').addEventListener('click', encryptToFile);
+
+document.getElementById("do-decrypt-selection").addEventListener("click", doDecryptSelection);
+
+document.getElementById("save-sender-lock").addEventListener("click", saveSenderLock);
+
+document.getElementById("ignore-sender-lock").addEventListener("click", () => {
+  document.getElementById("sender-prompt-overlay").classList.add("hidden");
+  pendingLock = null;
+});
+
+// Save email when changed inline to host.crypt
+document.getElementById("user-email").addEventListener("change", (e) => {
+  const email = e.target.value.trim();
+  if (email.includes("@") && currentHost) {
+    chrome.storage.sync.get([currentHost], (result) => {
+      const hostData = result[currentHost] || {};
+      hostData.crypt = hostData.crypt || {};
+      hostData.crypt.email = email;
+      chrome.storage.sync.set({ [currentHost]: hostData }, () => {
+        setStatus("Email updated for this host");
+      });
+    });
+  }
+});
+
+// Event Listener for decoy decrypt button
+document.getElementById('decoyDecryptBtn').addEventListener('click', doDecoyDecrypt);
+
+// Update listeners for notes card
+document.getElementById("save-notes-btn").onclick = () => saveNote("notes");
+document.getElementById("save-once-btn").onclick = () => saveNote("once");
+
+document.getElementById("clear-notes-btn").addEventListener("click", clearNotes);
+
+document.getElementById("unlock-notes-btn").addEventListener("click", unlockNotes);
+
+//document.getElementById("save-notes-btn").addEventListener("click", saveNotes);

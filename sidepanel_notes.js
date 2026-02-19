@@ -40,43 +40,84 @@ async function saveNote(type = "notes") {
   }
 }
 
-// Update listeners
-document.getElementById("save-notes-btn").onclick = () => saveNote("notes");
-document.getElementById("save-once-btn").onclick = () => saveNote("once");
+/*
+// 1. Save Encrypted Note
+async function saveNotes() {
+  const masterPwd = document.getElementById("m-pass").value;
+  const noteText = document.getElementById("site-notes-input").value;
+  const status = document.getElementById("synth-status");
 
-// 2. Clear Note Storage
-document
-  .getElementById("clear-notes-btn")
-  .addEventListener("click", async () => {
-    if (
-      !confirm("Delete the saved note for this site? This cannot be undone.")
-    ) {
-      return;
-    }
+  if (!masterPwd) {
+    // Show Master Password card if they try to save without one
+    cards.masterSection.classList.remove("hidden");
+    document.getElementById("m-pass").focus();
+    if (status) status.textContent = "Enter Master Password to save.";
+    return;
+  }
 
-    try {
-      const data = await chrome.storage.sync.get([currentHost]);
-      const hostData = data[currentHost] || {};
+  try {
+    // Derive key with host salt
+    const key = wiseHash(masterPwd, currentHost);
 
-      if (hostData.crypt) {
-        hostData.crypt.notes = null;
-        await chrome.storage.sync.set({ [currentHost]: hostData });
-      }
+    // Encrypt (k-mode)
+    const encryptedNote = keyEncrypt(noteText, key);
 
-      document.getElementById("site-notes-input").value = "";
-      const status = document.getElementById("synth-status");
-      status.textContent = "Note deleted.";
+    // Save to host.crypt.notes
+    const data = await chrome.storage.sync.get([currentHost]);
+    const hostData = data[currentHost] || {};
+    hostData.crypt = hostData.crypt || {};
+    hostData.crypt.notes = encryptedNote;
+
+    await chrome.storage.sync.set({ [currentHost]: hostData });
+
+    if (status) {
+      status.textContent = "Notes encrypted and saved.";
       status.style.color = "#22c55e";
-
       setTimeout(() => {
         status.textContent = "";
-      }, 2000);
-    } catch (e) {
-      alert("Error deleting note: " + e.message);
+      }, 3000);
     }
-  });
+  } catch (e) {
+    console.error("Save failed:", e);
+    if (status) {
+      status.textContent = "Error: " + e.message;
+      status.style.color = "#ef4444";
+    }
+  }
+}
+  */
 
-document.getElementById("unlock-notes-btn").addEventListener("click", () => {
+// 2. Clear Note Storage
+async function clearNotes() {
+  if (
+    !confirm("Delete the saved note for this site? This cannot be undone.")
+  ) {
+    return;
+  }
+
+  try {
+    const data = await chrome.storage.sync.get([currentHost]);
+    const hostData = data[currentHost] || {};
+
+    if (hostData.crypt) {
+      hostData.crypt.notes = null;
+      await chrome.storage.sync.set({ [currentHost]: hostData });
+    }
+
+    document.getElementById("site-notes-input").value = "";
+    const status = document.getElementById("synth-status");
+    status.textContent = "Note deleted.";
+    status.style.color = "#22c55e";
+
+    setTimeout(() => {
+      status.textContent = "";
+    }, 2000);
+  } catch (e) {
+    alert("Error deleting note: " + e.message);
+  }
+}
+
+function unlockNotes() {
   const masterPwd = document.getElementById("m-pass").value;
   if (!masterPwd) {
     cards.masterSection.classList.remove("hidden");
@@ -84,7 +125,7 @@ document.getElementById("unlock-notes-btn").addEventListener("click", () => {
     return;
   }
   unlockAndDecryptNote();
-});
+}
 
 // 3. Load/Decrypt Note
 async function loadSiteNotes(masterPwd) {
@@ -215,50 +256,3 @@ async function unlockAndDecryptNote() {
     alert("Decryption failed. Check your Master Password.");
   }
 }
-
-// 1. Save Encrypted Note
-document
-  .getElementById("save-notes-btn")
-  .addEventListener("click", async () => {
-    const masterPwd = document.getElementById("m-pass").value;
-    const noteText = document.getElementById("site-notes-input").value;
-    const status = document.getElementById("synth-status");
-
-    if (!masterPwd) {
-      // Show Master Password card if they try to save without one
-      cards.masterSection.classList.remove("hidden");
-      document.getElementById("m-pass").focus();
-      if (status) status.textContent = "Enter Master Password to save.";
-      return;
-    }
-
-    try {
-      // Derive key with host salt
-      const key = wiseHash(masterPwd, currentHost);
-
-      // Encrypt (k-mode)
-      const encryptedNote = keyEncrypt(noteText, key);
-
-      // Save to host.crypt.notes
-      const data = await chrome.storage.sync.get([currentHost]);
-      const hostData = data[currentHost] || {};
-      hostData.crypt = hostData.crypt || {};
-      hostData.crypt.notes = encryptedNote;
-
-      await chrome.storage.sync.set({ [currentHost]: hostData });
-
-      if (status) {
-        status.textContent = "Notes encrypted and saved.";
-        status.style.color = "#22c55e";
-        setTimeout(() => {
-          status.textContent = "";
-        }, 3000);
-      }
-    } catch (e) {
-      console.error("Save failed:", e);
-      if (status) {
-        status.textContent = "Error: " + e.message;
-        status.style.color = "#ef4444";
-      }
-    }
-  });

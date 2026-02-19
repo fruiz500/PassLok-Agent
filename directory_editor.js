@@ -1,6 +1,6 @@
 //code for editing the directory entries (synth and locDir) in sync storage
 
-let currentMode = "synth";
+let currentMode = "synth";        //initial mode (can be 'synth' or 'locDir')
 let currentHost = "";
 let masterPasswordContext = null; // 'synth', 'decrypt', or 'notes'
 
@@ -149,32 +149,48 @@ async function renderDirectory() {
 }
 
 // Add Entry Logic
-document
-  .getElementById("add-to-directory")
-  .addEventListener("click", async () => {
-    const name = document.getElementById("new-lock-name").value.trim();
-    const value = document.getElementById("new-lock-value").value.trim();
-    if (!name || !value) return;
+document.getElementById("add-to-directory").addEventListener("click", async () => {
+  const name = document.getElementById("new-lock-name").value.trim();
+  const value = document.getElementById("new-lock-value").value.trim();
+  if (!name || !value) return;
 
-    if (currentMode === "synth") {
-      const data = await chrome.storage.sync.get([currentHost]);
-      const hostData = data[currentHost] || {};
-      hostData.synth = hostData.synth || {};
-      hostData.synth[name] = value;
-      await chrome.storage.sync.set({ [currentHost]: hostData });
-    } else {
-      const data = await chrome.storage.sync.get(["locDir"]);
-      const locDir = data.locDir || {};
-      locDir[name] = [value];
-      await chrome.storage.sync.set({ locDir });
+  if (currentMode === "synth") {
+    const data = await chrome.storage.sync.get([currentHost]);
+    const hostData = data[currentHost] || {};
+    hostData.synth = hostData.synth || {};
+    hostData.synth[name] = value;
+    await chrome.storage.sync.set({ [currentHost]: hostData });
+  } else {
+    const data = await chrome.storage.sync.get(["locDir"]);
+    const locDir = data.locDir || {};
+    locDir[name] = [value];
+    await chrome.storage.sync.set({ locDir });
+  }
+
+  document.getElementById("new-lock-name").value = "";
+  document.getElementById("new-lock-value").value = "";
+  renderDirectory();
+});
+
+// Listen for close event
+window.addEventListener("closeDirectory", () => {
+  // Ensure directory card is hidden (redundant but safe)
+  const dirCard = document.getElementById('directory-card');
+  if (dirCard) dirCard.classList.add('hidden');
+
+  // If we're in manual file mode, ensure the crypto UI is visible
+  if (window.isManualForThisTab) {
+    const cryptoCard = document.getElementById('card-crypto');
+    if (cryptoCard) {
+      cryptoCard.classList.remove('hidden');
+      // Re-run updateUI to ensure all elements are in the right state
+      setTimeout(() => updateUI(lastState), 0);
     }
-
-    document.getElementById("new-lock-name").value = "";
-    document.getElementById("new-lock-value").value = "";
-    renderDirectory();
-  });
-
-//let previousCardId = null;
+  } else {
+    // Normal state restoration
+    updateUI(lastState);
+  }
+});
 
 // 1. Define the variable outside the object
 let previousVisibleCards = [];
@@ -184,45 +200,42 @@ window.DirectoryEditor = {
   setMode,
   setHost,
   // In directory_editor.js
-open: () => {
-  const cards = document.querySelectorAll(".card");
-  previousVisibleCards = [];
-  cards.forEach((card) => {
-    // Check if it's visible (not hidden)
-    if (window.getComputedStyle(card).display !== "none" && !card.classList.contains("hidden")) {
-      previousVisibleCards.push(card.id);
+  open: () => {
+    const cards = document.querySelectorAll(".card");
+    previousVisibleCards = [];
+    cards.forEach((card) => {
+      // Check if it's visible (not hidden)
+      if (window.getComputedStyle(card).display !== "none" && !card.classList.contains("hidden")) {
+        previousVisibleCards.push(card.id);
+      }
+      card.classList.add("hidden");
+    });
+
+    const masterSection = document.getElementById("master-password-section");
+    if (masterSection && !masterSection.classList.contains("hidden")) {
+      previousVisibleCards.push("master-password-section");
     }
-    card.classList.add("hidden");
-  });
-  
-  console.log("Saved visible cards:", previousVisibleCards); // TEST 1
+    if (masterSection) masterSection.classList.add("hidden");
 
-  const masterSection = document.getElementById("master-password-section");
-  if (masterSection && !masterSection.classList.contains("hidden")) {
-    previousVisibleCards.push("master-password-section");
-  }
-  if (masterSection) masterSection.classList.add("hidden");
+    document.getElementById("directory-card").classList.remove("hidden");
+    renderDirectory();
+  },
 
-  document.getElementById("directory-card").classList.remove("hidden");
-  renderDirectory();
-},
+  close: () => {
+    document.getElementById("directory-card").classList.add("hidden");
 
-close: () => {
-  console.log("Restoring cards:", previousVisibleCards); // TEST 2
-  document.getElementById("directory-card").classList.add("hidden");
-  
-  previousVisibleCards.forEach((id) => {
-    const el = document.getElementById(id);
-    if (el) {
+    previousVisibleCards.forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) {
         el.classList.remove("hidden");
-        console.log("Restored:", id); // TEST 3
-    }
-  });
+      }
+    });
 
-  window.dispatchEvent(new CustomEvent("closeDirectory"));
-},
+    window.dispatchEvent(new CustomEvent("closeDirectory"));
+  },
 };
 
+// For debugging: Display all sync storage in console
 function displaySync() {
   chrome.storage.sync.get(null, (items) => {
     chrome.storage.sync.get(null, (items) => {
