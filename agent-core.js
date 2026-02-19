@@ -130,6 +130,14 @@ document.addEventListener("click", (e) => {
 function getSelectedBlob() {
   const sel = window.getSelection();
   let text = sel.toString().trim();
+
+  // Don't extract blob if click is inside the auto-detected large input
+  if (autoTargetInput && sel.rangeCount > 0) {
+    const range = sel.getRangeAt(0);
+    if (autoTargetInput.contains(range.commonAncestorContainer)) {
+      return null;
+    }
+  }
   
   // If no selection, find blob near cursor
   if (!text) {
