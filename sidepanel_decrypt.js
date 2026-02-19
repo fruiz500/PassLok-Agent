@@ -22,54 +22,6 @@ function extractEmbeddedLock(text) {
   };
 }
 
-/*
-function renderDetectionList(items) {
-  const listEl = document.getElementById("crypto-detection-list");
-  if (!listEl) return;
-
-  // Clear existing list
-  listEl.innerHTML = "";
-
-  if (!items || items.length === 0) {
-    listEl.innerHTML =
-      '<div style="color: #999; font-size: 12px;">No encrypted items detected</div>';
-    return;
-  }
-
-  // Render each detected item
-  items.forEach((item, index) => {
-    const itemDiv = document.createElement("div");
-    itemDiv.style.cssText =
-      "padding: 8px; margin: 4px 0; border: 1px solid #ddd; border-radius: 4px; cursor: pointer; font-size: 12px;";
-
-    let label = "";
-    if (item.type === "LOCK") {
-      label = `Lock: ${item.raw.substring(0, 12)}...`;
-    } else if (item.type === "MESSAGE") {
-      label = `${item.mode} message`;
-      if (item.hasLock) label += ` (with Lock)`;
-    }
-
-    itemDiv.textContent = `${index + 1}. ${label}`;
-
-    // Click handler to load this blob into the view area
-    itemDiv.addEventListener("click", () => {
-      document.getElementById("composeBox").textContent = item.raw;
-
-      // Flash the decrypt button
-      const decryptBtn = document.getElementById("do-decrypt-selection");
-      if (decryptBtn) {
-        decryptBtn.style.background = "#22c55e";
-        setTimeout(() => {
-          decryptBtn.style.background = "";
-        }, 500);
-      }
-    });
-
-    listEl.appendChild(itemDiv);
-  });
-}*/
-
 // 3. Decrypt Button Listener
 function doDecryptSelection() {
   // 1. Read from the unified box

@@ -40,53 +40,6 @@ async function saveNote(type = "notes") {
   }
 }
 
-/*
-// 1. Save Encrypted Note
-async function saveNotes() {
-  const masterPwd = document.getElementById("m-pass").value;
-  const noteText = document.getElementById("site-notes-input").value;
-  const status = document.getElementById("synth-status");
-
-  if (!masterPwd) {
-    // Show Master Password card if they try to save without one
-    cards.masterSection.classList.remove("hidden");
-    document.getElementById("m-pass").focus();
-    if (status) status.textContent = "Enter Master Password to save.";
-    return;
-  }
-
-  try {
-    // Derive key with host salt
-    const key = wiseHash(masterPwd, currentHost);
-
-    // Encrypt (k-mode)
-    const encryptedNote = keyEncrypt(noteText, key);
-
-    // Save to host.crypt.notes
-    const data = await chrome.storage.sync.get([currentHost]);
-    const hostData = data[currentHost] || {};
-    hostData.crypt = hostData.crypt || {};
-    hostData.crypt.notes = encryptedNote;
-
-    await chrome.storage.sync.set({ [currentHost]: hostData });
-
-    if (status) {
-      status.textContent = "Notes encrypted and saved.";
-      status.style.color = "#22c55e";
-      setTimeout(() => {
-        status.textContent = "";
-      }, 3000);
-    }
-  } catch (e) {
-    console.error("Save failed:", e);
-    if (status) {
-      status.textContent = "Error: " + e.message;
-      status.style.color = "#ef4444";
-    }
-  }
-}
-  */
-
 // 2. Clear Note Storage
 async function clearNotes() {
   if (

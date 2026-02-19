@@ -1061,5 +1061,3 @@ document.getElementById("save-once-btn").onclick = () => saveNote("once");
 document.getElementById("clear-notes-btn").addEventListener("click", clearNotes);
 
 document.getElementById("unlock-notes-btn").addEventListener("click", unlockNotes);
-
-//document.getElementById("save-notes-btn").addEventListener("click", saveNotes);
