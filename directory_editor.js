@@ -77,8 +77,8 @@ async function renderDirectory() {
     item.style =
       "display: flex; justify-content: space-between; align-items: center; padding: 8px; border-bottom: 1px solid #eee; font-size: 12px;";
 
-    // locDir values are arrays [lock]
-    const displayValue = Array.isArray(value) ? value[0] : value;
+    // locDir values are now structured objects {lock, ro: {}}
+    const displayValue = (typeof value === 'object' && value !== null) ? value.lock : value;
     const previewText =
       typeof displayValue === "string"
         ? displayValue
@@ -125,7 +125,7 @@ async function renderDirectory() {
     btn.addEventListener("click", async (e) => {
       const name = e.target.dataset.name;
       let rawValue = JSON.parse(e.target.dataset.value);
-      const currentValue = Array.isArray(rawValue) ? rawValue[0] : rawValue;
+      const currentValue = (typeof rawValue === 'object' && rawValue !== null) ? rawValue.lock : rawValue;
 
       const newValue = prompt(`Update Lock for ${name}:`, currentValue);
       if (newValue === null || newValue === currentValue) return;
@@ -140,7 +140,12 @@ async function renderDirectory() {
       } else {
         const d = await chrome.storage.sync.get(["locDir"]);
         let locDir = d.locDir || {};
-        locDir[name] = [newValue]; // Maintain array structure
+        // Update structured object
+        if (typeof locDir[name] !== 'object' || locDir[name] === null) {
+          locDir[name] = { lock: newValue, ro: { key_kenc: null, lock_kenc: null, turn: 'reset' } };
+        } else {
+          locDir[name].lock = newValue;
+        }
         await chrome.storage.sync.set({ locDir });
       }
       renderDirectory();
@@ -163,7 +168,11 @@ document.getElementById("add-to-directory").addEventListener("click", async () =
   } else {
     const data = await chrome.storage.sync.get(["locDir"]);
     const locDir = data.locDir || {};
-    locDir[name] = [value];
+    // New structured object format
+    locDir[name] = {
+      lock: value,
+      ro: { key_kenc: null, lock_kenc: null, turn: 'reset' }
+    };
     await chrome.storage.sync.set({ locDir });
   }
 

@@ -483,7 +483,7 @@ window.updateLockList = function () {
       // Skip legacy locks starting with $
       if (name.startsWith('$')) continue;
 
-      const valString = Array.isArray(value) ? value[0] : value;
+      const valString = value.lock; // Assuming the structure is { lock: "base36string" }
       const isGroup = typeof valString === 'string' && valString.includes(',');
 
       const entry = { name, value: valString };

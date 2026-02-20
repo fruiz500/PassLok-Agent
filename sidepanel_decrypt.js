@@ -354,7 +354,7 @@ async function handleSignedMode(cipherInput, parsed, commonData) {
     for (const [name, data] of Object.entries(locDir)) {
       locksToTry.push({
         name: name,
-        lockStr: Array.isArray(data) ? data[0] : data
+        lockStr: data.lock
       });
     }
 
@@ -446,7 +446,7 @@ async function promptUserToNameSenderLock(parsed) {
 
   // 2. Check against locDir using the Base36 string
   const knownEntry = Object.entries(locDir).find(([_, data]) => {
-    const storedLock = data[0] || "";
+    const storedLock = data.lock || "";
     return storedLock === theirLockB36;
   });
 
@@ -527,12 +527,15 @@ function displayResult(content, modeLabel, senderName) {
   box.focus();
 }
 
+/*
 // Helper function to prompt user to select sender Lock from stored Locks
 function promptUserToSelectSenderLock(locDir, callback) {
   alert("Sender Lock selection UI not fully implemented yet.");
-  // For now, just call the callback with a dummy name
-  callback(Object.keys(locDir)[0]);
+  // Filter to ensure we only pick keys that have a lock property
+  const validNames = Object.keys(locDir).filter(name => locDir[name].lock);
+  callback(validNames[0]);
 }
+*/
 
 let pendingLock = null;
 
@@ -549,7 +552,7 @@ function promptForSenderName(theirLockB36) {
 }
 
 // 2. The Save Button Listener
-  function saveSenderLock() {
+function saveSenderLock() {
   const name = document.getElementById("new-sender-name").value.trim();
   if (!name) {
     alert("Please enter a name.");
@@ -560,8 +563,13 @@ function promptForSenderName(theirLockB36) {
   chrome.storage.sync.get(["locDir"], (result) => {
     let locDir = result.locDir || {}; // Initialize if it doesn't exist
 
-    // Store as an array [lock] to allow for future metadata (like email/notes)
-    locDir[name] = [pendingLock];
+    // If the entry exists and is an object, merge the lock. 
+    // Otherwise, create a new object.
+    if (typeof locDir[name] === 'object' && locDir[name] !== null && !Array.isArray(locDir[name])) {
+      locDir[name].lock = pendingLock;
+    } else {
+      locDir[name] = { lock: pendingLock };
+    }
 
     chrome.storage.sync.set({ locDir }, () => {
       document.getElementById("sender-prompt-overlay").classList.add("hidden");

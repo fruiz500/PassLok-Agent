@@ -116,8 +116,8 @@ async function startEncryption() {
 
     // 1. Unified Logic: If box is empty, offer Folder Key
     if (!rawHTML) {
-      const promptMsg = window.activeFolderKey 
-        ? "Compose box is empty. Use the ACTIVE Folder Key as payload?" 
+      const promptMsg = window.activeFolderKey
+        ? "Compose box is empty. Use the ACTIVE Folder Key as payload?"
         : "Compose box is empty. Generate a NEW 32-byte Folder Key?";
 
       if (confirm(promptMsg)) {
@@ -406,10 +406,10 @@ async function coreEncrypt(msgUint8, settings) {
     // --- 1. Resolve everything into a unique set of 50-char LOCK STRINGS ---
     const finalLocks = new Set();
 
-   const resolveToLocks = (input) => {
+    const resolveToLocks = (input) => {
       if (!input || typeof input !== 'string') return;
       const trimmed = input.trim();
-      
+
       // SPECIAL CASE: If it's literally "me", use the site-specific lock
       if (trimmed.toLowerCase() === 'me') {
         const myLock = base36Lock || myStoredLock;
@@ -434,7 +434,7 @@ async function coreEncrypt(msgUint8, settings) {
       // C. Otherwise, it's a Name/Key in locDir
       const cleanName = trimmed.replace(/^=|=$/g, '');
       const entry = locDir[cleanName];
-      const value = Array.isArray(entry) ? entry[0] : entry;
+      const value = entry.lock;
 
       if (value) {
         resolveToLocks(value); // Recurse to handle if value is a lock or a group
@@ -501,8 +501,8 @@ async function encryptToFile() {
     let isFolderKey = false;
 
     if (!rawHTML || rawHTML === "Type or decrypt here..." || rawHTML === "Select an item to view...") {
-      const promptMsg = window.activeFolderKey 
-        ? "Compose box is empty. Encrypt the ACTIVE Folder Key to this file?" 
+      const promptMsg = window.activeFolderKey
+        ? "Compose box is empty. Encrypt the ACTIVE Folder Key to this file?"
         : "Compose box is empty. Generate and encrypt a NEW random Folder Key?";
 
       const confirmed = confirm(promptMsg);
