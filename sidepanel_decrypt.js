@@ -112,6 +112,7 @@ async function continueDecrypt(input, masterPwd, myEmail) {
     if (marker === 128) type = "g";
     else if (marker === 0) type = "A";
     else if (marker === 72) type = "S";
+    else if (marker === 56) type = "O"; // Added: Read-once mode ('O')
     else type = String.fromCharCode(marker); // Fallback for ASCII-based markers
 
     // 3. ROUTE: Pass the binary bytes to the handlers
@@ -201,6 +202,7 @@ async function routeByMode(type, cipherText, parsed, commonData) {
     case "g": return handleGMode(cipherText, parsed);
     case "A": return handleAnonymousMode(cipherText, commonData);
     case "S": return handleSignedMode(cipherText, parsed, commonData);
+    case "O": return handleOnceMode(cipherText, parsed, commonData); // Read-once mode uses same handler for now
     default: return { success: false, error: `Unsupported mode: ${type}` };
   }
 }
@@ -302,6 +304,98 @@ async function handleAnonymousMode(cipherInput, commonData) {
 }
 
 async function handleSignedMode(cipherInput, parsed, commonData) {
+  try {
+    const { myKey, myLockbin } = commonData;
+    // cipherInput is now already a Uint8Array
+
+    const recipients = cipherInput[1];
+    const nonce = cipherInput.slice(2, 17);
+    const padding = cipherInput.slice(17, 117);
+    const nonce24 = makeNonce24(nonce);
+    const stuffForId = myLockbin;
+
+    const cipherData = cipherInput.slice(117);
+    const cipher = cipherData.slice(56 * recipients);
+
+    // 1. If prepended Lock, try to decrypt with it
+    if (parsed.hasLock) {
+      const senderLock = ezLockToUint8(parsed.ezLock);
+      if (senderLock) {
+        const sharedKey = makeShared(ed2curve.convertPublicKey(senderLock), myKey);
+        const idTag = nacl.secretbox(stuffForId, nonce24, sharedKey).slice(0, 8);
+        const msgKeycipher = findEncryptedMessageKey(recipients, cipherData, idTag);
+
+        if (msgKeycipher) {
+          const msgKey = nacl.secretbox.open(msgKeycipher, nonce24, sharedKey);
+          if (msgKey) {
+            return { success: true, messageKey: msgKey, nonce: nonce24, padding: padding, cipher, senderName: "Prepended Lock" };
+          }
+        }
+      }
+    }
+
+    // 2. Fallback: Try site-specific lock and all known Locks in locDir
+    const host = currentHost;
+    const storageKeys = ['locDir'];
+    if (host) storageKeys.push(host);
+
+    const storageData = await chrome.storage.sync.get(storageKeys);
+    const locDir = storageData.locDir || {};
+
+    let locksToTry = [];
+
+    // Correctly navigate the nested structure: host -> crypt -> lock
+    if (host && storageData[host] && storageData[host].crypt && storageData[host].crypt.lock) {
+      locksToTry.push({
+        name: "Me",
+        lockStr: storageData[host].crypt.lock
+      });
+    }
+
+    // Add locDir entries
+    for (const [name, data] of Object.entries(locDir)) {
+      locksToTry.push({
+        name: name,
+        lockStr: data.lock
+      });
+    }
+
+    // Now loop through the prioritized list
+    for (const entry of locksToTry) {
+      try {
+        const senderLock = ezLockToUint8(entry.lockStr);
+        if (!senderLock) continue;
+
+        const sharedKey = makeShared(ed2curve.convertPublicKey(senderLock), myKey);
+        const idTag = nacl.secretbox(stuffForId, nonce24, sharedKey).slice(0, 8);
+        const msgKeycipher = findEncryptedMessageKey(recipients, cipherData, idTag);
+
+        if (msgKeycipher) {
+          const msgKey = nacl.secretbox.open(msgKeycipher, nonce24, sharedKey);
+          if (msgKey) {
+            return {
+              success: true,
+              messageKey: msgKey,
+              nonce: nonce24,
+              padding: padding,
+              cipher,
+              senderName: entry.name
+            };
+          }
+        }
+      } catch (e) {
+        continue;
+      }
+    }
+
+    return { success: false, error: "No matching sender Lock found in directory" };
+  } catch (e) {
+    return { success: false, error: e.message };
+  }
+}
+
+//for the time being, identical to handleSignedMode since the main difference is in how the message is encrypted (e.g. no sender lock, different marker byte). The handler logic can be the same since we are trying all known locks anyway. We can differentiate later if we want to enforce that "once" mode messages must not have sender locks, etc.
+async function handleOnceMode(cipherInput, parsed, commonData) {
   try {
     const { myKey, myLockbin } = commonData;
     // cipherInput is now already a Uint8Array

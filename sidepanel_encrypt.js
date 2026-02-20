@@ -10,10 +10,11 @@
  * @param {Uint8Array} mySecretKey - The sender's secret key (for decoy encryption).
  * @returns {Uint8Array} The constructed header.
  */
-function buildBinaryHeader(isAnon, recipientCount, nonce15, ephemeralPub, decoyPlaintext, mySecretKey) {
+function buildBinaryHeader(mode, recipientCount, nonce15, ephemeralPub, decoyPlaintext, mySecretKey) {
   // 1. Build the 2-byte header
   const outHeader = new Uint8Array(2);
-  outHeader[0] = isAnon ? 0 : 72; // 0 for Anonymous ('A'), 72 for Signed ('S')
+  // mode: 0 for Anonymous ('A'), 72 for Signed ('S'), 56 for Read-once ('O')
+  outHeader[0] = mode; 
   outHeader[1] = recipientCount & 0xFF;
 
   // 2. Build the 100-byte padding (may contain encrypted decoy message)
@@ -27,8 +28,8 @@ function buildBinaryHeader(isAnon, recipientCount, nonce15, ephemeralPub, decoyP
   // 3. Assemble: [2-byte header] + [15-byte nonce] + [100-byte padding]
   let header = concatUi8([outHeader, nonce15, padding]);
 
-  // 4. If Anonymous mode, append the ephemeral public key (32 bytes)
-  if (isAnon && ephemeralPub) {
+  // 4. If Anonymous mode (0), append the ephemeral public key (32 bytes)
+  if (mode === 0 && ephemeralPub) {
     header = concatUi8([header, ephemeralPub]);
   }
 
@@ -36,16 +37,31 @@ function buildBinaryHeader(isAnon, recipientCount, nonce15, ephemeralPub, decoyP
 }
 
 // Helper updated to take the B64 lock directly to simplify the "Me" vs "locDir" logic
-function encryptForRecipientWithLock(recipientSigningPub, nonce24, msgKey, mySecretKey) {
+// Modified to handle Signed (72) and Read-once (56) modes separately
+function encryptForRecipientWithLock(recipientSigningPub, nonce24, msgKey, mySecretKey, mode) {
   // recipientSigningPub is the Uint8Array passed from coreEncrypt
   const recipientPub = ed2curve.convertPublicKey(recipientSigningPub);
   if (!recipientPub) return null;
 
-  const sharedKey = nacl.box.before(recipientPub, mySecretKey);
-  const cipher2 = nacl.secretbox(msgKey, nonce24, sharedKey);
-  const idTag = nacl.secretbox(recipientSigningPub, nonce24, sharedKey).slice(0, 8);
-
-  return concatUi8([idTag, cipher2]);
+  // Separate handling for Signed and Read-once modes
+  if (mode === 72) { // Signed mode
+    const sharedKey = nacl.box.before(recipientPub, mySecretKey);
+    const cipher2 = nacl.secretbox(msgKey, nonce24, sharedKey);
+    const idTag = nacl.secretbox(recipientSigningPub, nonce24, sharedKey).slice(0, 8);
+    return concatUi8([idTag, cipher2]);
+  } else if (mode === 56) { // Read-once mode
+    // Same implementation as Signed for now, but will be different in full implementation
+    const sharedKey = nacl.box.before(recipientPub, mySecretKey);
+    const cipher2 = nacl.secretbox(msgKey, nonce24, sharedKey);
+    const idTag = nacl.secretbox(recipientSigningPub, nonce24, sharedKey).slice(0, 8);
+    return concatUi8([idTag, cipher2]);
+  } else {
+    // Fallback for other modes (like Anonymous)
+    const sharedKey = nacl.box.before(recipientPub, mySecretKey);
+    const cipher2 = nacl.secretbox(msgKey, nonce24, sharedKey);
+    const idTag = nacl.secretbox(recipientSigningPub, nonce24, sharedKey).slice(0, 8);
+    return concatUi8([idTag, cipher2]);
+  }
 }
 
 /**
@@ -103,6 +119,7 @@ async function startEncryption() {
   const composeBox = document.getElementById('composeBox');
   const lockList = document.getElementById('lockList');
   const isAnon = document.getElementById('anonMode')?.checked;
+  const isOnce = document.getElementById('onceMode')?.checked; // Check for Read-once mode
   const includeLock = document.getElementById('includeLock');
   const decoyToggle = document.getElementById('decoyModeToggle');
   const decoyArea = document.getElementById('decoyMessageArea');
@@ -131,10 +148,20 @@ async function startEncryption() {
       msgUint8 = new TextEncoder().encode(rawHTML);
     }
 
+    // Determine mode: 0 for Anonymous ('A'), 72 for Signed ('S'), 56 for Read-once ('O')
+    let mode;
+    if (isAnon) {
+      mode = 0; // Anonymous
+    } else if (isOnce) {
+      mode = 56; // Read-once
+    } else {
+      mode = 72; // Signed (default)
+    }
+
     // --- CALL CORE ENCRYPTION ---
     const settings = {
       selectedRecipients: Array.from(lockList.selectedOptions).map(o => o.value.trim()).filter(s => s),
-      isAnon: isAnon,
+      mode: mode, // Use the new mode parameter
       masterPwd: document.getElementById('m-pass')?.value,
       myEmail: "",
       activeFolderKey: window.activeFolderKey,
@@ -156,7 +183,7 @@ async function startEncryption() {
     if (!suppressLock) {
       const forceLock = (modeLabel === "INVITATION");
       const optionalLock = (includeLock?.checked &&
-        (modeLabel === "SIGNED" || modeLabel === "ANONYMOUS" || modeLabel === "SYMMETRIC"));
+        (modeLabel === "SIGNED" || modeLabel === "ANONYMOUS" || modeLabel === "READ-ONCE" || modeLabel === "SYMMETRIC")); // Added READ-ONCE
 
       if (forceLock || optionalLock) {
         const storage = await chrome.storage.sync.get([currentHost]);
@@ -323,17 +350,20 @@ function packPassLokDocument() {
 async function processFileEncryption(fileUint8, outName) {
   try {
     const lockList = document.getElementById('lockList');
-    // ADD THESE TWO LINES
     const decoyToggle = document.getElementById('decoyModeToggle');
     const decoyArea = document.getElementById('decoyMessageArea');
 
+    // --- MODIFIED: Handle three modes instead of just isAnon ---
+    let mode = 72; // Default to Signed ('S')
+    if (document.getElementById('anonMode')?.checked) mode = 0;   // Anonymous ('A')
+    if (document.getElementById('onceMode')?.checked) mode = 56;  // Read-once ('O')
+
     const settings = {
       selectedRecipients: Array.from(lockList.selectedOptions).map(o => o.value.trim()).filter(s => s),
-      isAnon: document.getElementById('anonMode')?.checked,
+      mode: mode,
       masterPwd: document.getElementById('m-pass')?.value,
       myEmail: "",
       activeFolderKey: window.activeFolderKey,
-      // CHANGE THIS LINE:
       decoyText: (decoyToggle && decoyToggle.checked) ? decoyArea.value.trim() : ""
     };
 
@@ -350,7 +380,7 @@ async function processFileEncryption(fileUint8, outName) {
 }
 
 async function coreEncrypt(msgUint8, settings) {
-  // settings: { selectedRecipients, isAnon, masterPwd, myEmail, activeFolderKey, decoyText }
+  // settings: { selectedRecipients, mode, masterPwd, myEmail, activeFolderKey, decoyText }
   let finalBin, modeLabel;
   let base36Lock = "";
   let suppressLock = false;
@@ -379,20 +409,21 @@ async function coreEncrypt(msgUint8, settings) {
       modeLabel = result.modeLabel;
     }
   }
-  // 2. Signed / Anonymous Path
+  // 2. Signed / Anonymous / Read-once Path
   else {
-    modeLabel = settings.isAnon ? "ANONYMOUS" : "SIGNED";
+    // mode: 0 for Anonymous ('A'), 72 for Signed ('S'), 56 for Read-once ('O')
+    modeLabel = settings.mode === 0 ? "ANONYMOUS" : (settings.mode === 72 ? "SIGNED" : "READ-ONCE");
     const storage = await chrome.storage.sync.get([currentHost, 'locDir']);
     const locDir = storage.locDir || {};
     const userData = storage[currentHost] || {};
     const myStoredLock = userData?.crypt?.lock || "";
 
     let mySecretKey, ephemeralPub = null;
-    if (settings.isAnon) {
+    if (settings.mode === 0) { // Anonymous mode
       const ephemeral = nacl.box.keyPair();
       mySecretKey = ephemeral.secretKey;
       ephemeralPub = ephemeral.publicKey;
-    } else {
+    } else { // Signed or Read-once mode
       if (!settings.masterPwd) throw new Error("Master password required.");
       const common = await prepareCommonData(settings.masterPwd, settings.myEmail || userData?.crypt?.email || "", null);
       mySecretKey = common.myKey;
@@ -455,13 +486,13 @@ async function coreEncrypt(msgUint8, settings) {
     for (const lockB36 of finalLocks) {
       const recipientUint8 = ezLockToUint8(lockB36);
       if (recipientUint8) {
-        const slot = encryptForRecipientWithLock(recipientUint8, nonce24, msgKey, mySecretKey);
+        const slot = encryptForRecipientWithLock(recipientUint8, nonce24, msgKey, mySecretKey, settings.mode);
         if (slot) recipientSlots.push(slot);
       }
     }
 
     // 2. Build header with the ACTUAL count of slots created
-    let outArray = buildBinaryHeader(settings.isAnon, recipientSlots.length, nonce15, ephemeralPub, settings.decoyText || "", mySecretKey);
+    let outArray = buildBinaryHeader(settings.mode, recipientSlots.length, nonce15, ephemeralPub, settings.decoyText || "", mySecretKey);
 
     // 3. Shuffle slots
     for (let i = recipientSlots.length - 1; i > 0; i--) {
@@ -489,7 +520,12 @@ async function encryptToFile() {
   const statusMsg = document.getElementById('encryptMsg');
   const composeBox = document.getElementById('composeBox');
   const lockList = document.getElementById('lockList');
-  const isAnon = document.getElementById('anonMode')?.checked;
+  
+  // --- MODIFIED: Handle three modes instead of just isAnon ---
+  let mode = 72; // Default to Signed ('S')
+  if (document.getElementById('anonMode')?.checked) mode = 0;   // Anonymous ('A')
+  if (document.getElementById('onceMode')?.checked) mode = 56;  // Read-once ('O')
+  
   const decoyToggle = document.getElementById('decoyModeToggle');
   const decoyArea = document.getElementById('decoyMessageArea');
 
@@ -510,7 +546,6 @@ async function encryptToFile() {
         if (statusMsg) statusMsg.textContent = "";
         return;
       }
-      // Use active key if it exists, otherwise generate new
       msgUint8 = window.activeFolderKey || nacl.randomBytes(32);
       isFolderKey = true;
     } else {
@@ -519,7 +554,8 @@ async function encryptToFile() {
 
     const settings = {
       selectedRecipients: Array.from(lockList.selectedOptions).map(o => o.value.trim()).filter(s => s),
-      isAnon: isAnon,
+      // --- MODIFIED: Pass mode instead of isAnon ---
+      mode: mode,
       masterPwd: document.getElementById('m-pass')?.value,
       myEmail: "",
       activeFolderKey: window.activeFolderKey,
@@ -538,7 +574,6 @@ async function encryptToFile() {
 
     triggerDownload(finalBin, fileName);
 
-    // --- NEW DETAILED REPORTING ---
     if (typeof reportCryptoSuccess === "function") {
       reportCryptoSuccess("encrypt", {
         mode: isFolderKey ? "FOLDER KEY" : modeLabel,
