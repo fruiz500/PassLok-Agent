@@ -1,3 +1,69 @@
+// --- Global locDir Management ---
+
+// 1. The global directory object
+var locDir = {}; // Using var to ensure it's truly global
+
+// 2. Helper to persist the directory
+async function syncLocDir() {
+  return new Promise((resolve, reject) => {
+    chrome.storage.sync.set({ locDir }, () => {
+      if (chrome.runtime.lastError) {
+        console.error("Error syncing locDir:", chrome.runtime.lastError);
+        reject(chrome.runtime.lastError);
+      } else {
+        console.log("Global locDir synced to storage.");
+        resolve();
+      }
+    });
+  });
+}
+
+/**
+ * Loads the locDir from chrome.storage.sync into the global variable.
+ * Call this once during app initialization.
+ */
+async function loadLocDir() {
+  return new Promise((resolve, reject) => {
+    chrome.storage.sync.get(['locDir'], (result) => {
+      if (chrome.runtime.lastError) {
+        console.error("Error loading locDir:", chrome.runtime.lastError);
+        reject(chrome.runtime.lastError);
+      } else {
+        locDir = result.locDir || {};
+        console.log("Global locDir loaded from storage.");
+        resolve(locDir);
+      }
+    });
+  });
+}
+
+async function resetReadOnce(recipient) {
+  chrome.storage.sync.get("locDir", (result) => {
+    const locDir = result.locDir || {};
+
+    if (locDir[recipient]) {
+      delete locDir[recipient].ro;
+      console.log(`Deleted 'ro' key for ${recipient}.`);
+
+      chrome.storage.sync.set({ locDir }, () => {
+        if (chrome.runtime.lastError) {
+          console.error("Error saving locDir:", chrome.runtime.lastError);
+        } else {
+          console.log("locDir successfully updated in sync storage.");
+        }
+      });
+    } else {
+      console.log(`Recipient '${recipient}' not found in locDir.`);
+    }
+  });
+}
+
+// 3. Explicitly make them global (good practice)
+window.locDir = locDir;
+window.syncLocDir = syncLocDir;
+window.loadLocDir = loadLocDir;
+window.resetReadOnce = resetReadOnce;
+
 /**
  * Core Crypto Utilities
  * Moved from legacy keylock.js to support standalone Agent functionality.
@@ -176,9 +242,9 @@ function makeShared(pub, sec) {
   return nacl.box.before(pub, sec);
 }
 
-//makes the DH public key (Montgomery) from a published Lock, which is a Signing public key (Edwards)
+//makes the DH public key (Montgomery) from a published Lock, which is a Signing public key (Edwards) in base36
 function convertPubStr(Lock) {
-  var LockBin = nacl.util.decodeBase64(Lock);
+  var LockBin = nacl.util.decodeBase64(changeBase(Lock, base36, base64, true));
   if (!LockBin) return false;
   return ed2curve.convertPublicKey(LockBin);
 }
@@ -212,35 +278,85 @@ function concatUi8(arrays) {
 
 // Implements PassLok k-mode (Symmetric Encryption)
 
+/**
+ * Encrypts data for storage. Can handle both strings and Uint8Arrays.
+ * @param {string|Uint8Array} plaintext - The data to encrypt.
+ * @param {Uint8Array} key - The secret key for encryption.
+ * @returns {string} The encrypted data as a base64 string.
+ */
 function keyEncrypt(plaintext, key) {
+  let msgUint8;
+
+  // 1. Handle input type
+  if (typeof plaintext === 'string') {
+    // String path
+    msgUint8 = nacl.util.decodeUTF8(plaintext);
+  } else if (plaintext instanceof Uint8Array) {
+    // Binary path for ephemeral keys/locks
+    msgUint8 = plaintext;
+  } else {
+    throw new TypeError("keyEncrypt: plaintext must be a string or Uint8Array");
+  }
+
+  // 2. Perform encryption
   const nonce = nacl.randomBytes(24);
-  const msgUint8 = nacl.util.decodeUTF8(plaintext);
   const box = nacl.secretbox(msgUint8, nonce, key);
 
+  // 3. Assemble full message
   const fullMessage = new Uint8Array(1 + nonce.length + box.length);
   fullMessage[0] = 144; // PassLok k-mode marker
   fullMessage.set(nonce, 1);
   fullMessage.set(box, 1 + nonce.length);
 
+  // 4. Return as base64 string for storage
   return nacl.util.encodeBase64(fullMessage);
 }
 
-function keyDecrypt(ciphertextBase64, key) {
-  const fullMessage = nacl.util.decodeBase64(ciphertextBase64);
-
-  if (fullMessage[0] !== 144) {
-    throw new Error("Not a valid k-mode message (marker 144 missing)");
+/**
+ * Decrypts data stored by keyEncrypt.
+ * @param {string} ciphertextBase64 - The encrypted data as a base64 string.
+ * @param {Uint8Array} key - The secret key for decryption.
+ * @param {boolean} returnUint8 - If true, returns raw Uint8Array; otherwise returns UTF-8 string.
+ * @returns {string|Uint8Array|null} The decrypted data, or null on failure.
+ */
+function keyDecrypt(ciphertextBase64, key, returnUint8 = false) {
+  let fullMessage;
+  try {
+    fullMessage = nacl.util.decodeBase64(ciphertextBase64);
+  } catch (e) {
+    console.error("keyDecrypt: Failed to decode base64 input.", e);
+    return null;
   }
 
+  // 1. Check marker
+  if (fullMessage[0] !== 144) {
+    console.error("keyDecrypt: Not a valid k-mode message (marker 144 missing)");
+    return null;
+  }
+
+  // 2. Extract parts
   const nonce = fullMessage.slice(1, 25);
   const box = fullMessage.slice(25);
 
+  // 3. Decrypt
   const decrypted = nacl.secretbox.open(box, nonce, key);
   if (!decrypted) {
-    throw new Error("Decryption failed (wrong key or corrupted data)");
+    console.error("keyDecrypt: Decryption failed (wrong key or corrupted data)");
+    return null;
   }
 
-  return nacl.util.encodeUTF8(decrypted);
+  // 4. Return in requested format
+  if (returnUint8) {
+    return decrypted; // Return raw Uint8Array
+  } else {
+    // String path
+    try {
+      return nacl.util.encodeUTF8(decrypted);
+    } catch (e) {
+      console.error("keyDecrypt: Decrypted data is not valid UTF-8.", e);
+      return null;
+    }
+  }
 }
 
 //changes the base of a number. inAlpha and outAlpha are strings containing the base code for the original and target bases, as in '0123456789' for decimal

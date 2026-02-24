@@ -135,7 +135,7 @@ async function updateUI(state) {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   const currentTabId = tab?.id;
 
-// Check if THIS specific tab is the one that requested manual mode
+  // Check if THIS specific tab is the one that requested manual mode
   const isManualForThisTab = (window.manualModeTabId === currentTabId);
   window.isManualForThisTab = isManualForThisTab; // Expose globally for other scripts
 
@@ -544,7 +544,7 @@ document.getElementById("open-directory-btn").addEventListener("click", () => {
 
 chrome.runtime.onMessage.addListener((request) => {
   if (request.type === "STATE_UPDATE") {
-//    window.isManualFileMode = false; // Reset manual override on new state
+    //    window.isManualFileMode = false; // Reset manual override on new state
     updateUI(request.state);
   }
 
@@ -625,13 +625,13 @@ function startMasterPwdTimeout() {
     }
   }, { passive: true });
 });
-
+/*
 // Also trigger it once when the sidepanel first loads
 document.addEventListener('DOMContentLoaded', () => {
   if (typeof startMasterPwdTimeout === 'function') {
     startMasterPwdTimeout();
   }
-});
+});*/
 
 // UI Logic for the Decoy Section with Byte Counting
 const dToggle = document.getElementById('decoyModeToggle');
@@ -939,19 +939,40 @@ function triggerDownload(uint8Array, fileName) {
 }
 
 // Add to the bottom of sidepanel_UI.js
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+  // 1. Load the global directory from storage immediately
+  try {
+    if (typeof loadLocDir === 'function') {
+      await loadLocDir();
+    } else {
+      // Fallback if crypto-common.js isn't loaded yet or function is missing
+      const data = await chrome.storage.sync.get(['locDir']);
+      window.locDir = data.locDir || {};
+      console.log("Global locDir initialized via fallback.");
+    }
+  } catch (e) {
+    console.error("Failed to initialize directory:", e);
+    window.locDir = window.locDir || {}; // Ensure it's at least an empty object
+  }
+
+  // 2. Continue with the rest of the setup
   if (typeof startMasterPwdTimeout === 'function') {
     startMasterPwdTimeout();
   }
+
   setupCryptoCardListeners();
+
   if (typeof updateRecipientStatus === 'function') {
     updateRecipientStatus();
   }
+
   const closeDirBtn = document.getElementById('close-directory');
   if (closeDirBtn) {
     closeDirBtn.addEventListener('click', () => {
       // Delegate to the DirectoryEditor's close method
-      DirectoryEditor.close();
+      if (typeof DirectoryEditor !== 'undefined' && DirectoryEditor.close) {
+        DirectoryEditor.close();
+      }
     });
   }
 });

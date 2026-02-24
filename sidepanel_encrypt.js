@@ -14,7 +14,7 @@ function buildBinaryHeader(mode, recipientCount, nonce15, ephemeralPub, decoyPla
   // 1. Build the 2-byte header
   const outHeader = new Uint8Array(2);
   // mode: 0 for Anonymous ('A'), 72 for Signed ('S'), 56 for Read-once ('O')
-  outHeader[0] = mode; 
+  outHeader[0] = mode;
   outHeader[1] = recipientCount & 0xFF;
 
   // 2. Build the 100-byte padding (may contain encrypted decoy message)
@@ -36,32 +36,110 @@ function buildBinaryHeader(mode, recipientCount, nonce15, ephemeralPub, decoyPla
   return header;
 }
 
-// Helper updated to take the B64 lock directly to simplify the "Me" vs "locDir" logic
-// Modified to handle Signed (72) and Read-once (56) modes separately
-function encryptForRecipientWithLock(recipientSigningPub, nonce24, msgKey, mySecretKey, mode) {
-  // recipientSigningPub is the Uint8Array passed from coreEncrypt
+/**
+ * Encrypts the message key for a single recipient, handling standard and Read-once modes.
+ * In Read-once mode, it manages a per-recipient state machine to ensure Perfect Forward Secrecy (PFS).
+ * 
+ * @param {Uint8Array} recipientSigningPub - Recipient's permanent Edwards public key.
+ * @param {Uint8Array} nonce24 - 24-byte nonce used for the entire message.
+ * @param {Uint8Array} msgKey - 32-byte random key that encrypts the actual message body.
+ * @param {Uint8Array} mySecretKey - Sender's permanent Curve25519 secret key.
+ * @param {string} storageKey - Key used to encrypt locDir state for this recipient.
+ * @param {number} mode - 0 (Anonymous), 72 (Signed), 56 (Read-once).
+ * @param {string} recipientEmail - Email used to look up ephemeral state in locDir.
+ */
+function encryptForRecipientWithLock(recipientSigningPub, nonce24, msgKey, mySecretKey, storageKey, mode, recipientEmail) {
+  // Convert recipient's signing key (Edwards) to encryption key (Montgomery/Curve25519)
   const recipientPub = ed2curve.convertPublicKey(recipientSigningPub);
   if (!recipientPub) return null;
 
-  // Separate handling for Signed and Read-once modes
-  if (mode === 72) { // Signed mode
-    const sharedKey = nacl.box.before(recipientPub, mySecretKey);
-    const cipher2 = nacl.secretbox(msgKey, nonce24, sharedKey);
-    const idTag = nacl.secretbox(recipientSigningPub, nonce24, sharedKey).slice(0, 8);
-    return concatUi8([idTag, cipher2]);
-  } else if (mode === 56) { // Read-once mode
-    // Same implementation as Signed for now, but will be different in full implementation
-    const sharedKey = nacl.box.before(recipientPub, mySecretKey);
-    const cipher2 = nacl.secretbox(msgKey, nonce24, sharedKey);
-    const idTag = nacl.secretbox(recipientSigningPub, nonce24, sharedKey).slice(0, 8);
-    return concatUi8([idTag, cipher2]);
-  } else {
-    // Fallback for other modes (like Anonymous)
+  // --- 1. STANDARD MODES (Signed or Anonymous) ---
+  if (mode === 72 || mode === 0) {
     const sharedKey = nacl.box.before(recipientPub, mySecretKey);
     const cipher2 = nacl.secretbox(msgKey, nonce24, sharedKey);
     const idTag = nacl.secretbox(recipientSigningPub, nonce24, sharedKey).slice(0, 8);
     return concatUi8([idTag, cipher2]);
   }
+
+  // --- 2. READ-ONCE MODE (56) ---
+  else if (mode === 56) {
+    // FIX 1: Always read from the GLOBAL locDir
+    if (!window.locDir[recipientEmail]) {
+        window.locDir[recipientEmail] = { 
+            lock: changeBase(nacl.util.encodeBase64(recipientSigningPub), base64, base36, true),
+            ro: { lastkey: null, lastlock: null, turn: null } 
+        };
+    }
+    const entry = window.locDir[recipientEmail]; // Reference the global entry
+
+    const lastKeyCipher = entry.ro?.lastkey;
+    const lastLockCipher = entry.ro?.lastlock;
+    const turnstring = entry.ro?.turn;
+
+    const secdum = nacl.randomBytes(32);
+    let typeByte;
+    let isReset = false;
+
+    if (turnstring === 'reset' || !turnstring) {
+      typeByte = new Uint8Array([172]);
+      isReset = true;
+    } else if (turnstring === 'unlock') {
+      typeByte = new Uint8Array([164]);
+    } else {
+      typeByte = new Uint8Array([160]);
+    }
+
+    let lastKey;
+    if (lastKeyCipher) {
+      lastKey = keyDecrypt(lastKeyCipher, storageKey, true);
+    } else {
+      lastKey = secdum; // Use the new random key if there's no previous key (first-time setup)
+      if (!isReset) {
+        typeByte = new Uint8Array([164]);
+      }
+    }
+
+    let lastLock;
+    if (lastLockCipher) {
+      lastLock = keyDecrypt(lastLockCipher, storageKey, true);
+    } else {
+      lastLock = convertPubStr(entry.lock); //use permanent Lock if nothig stored yet
+    }
+
+    const sharedKey = nacl.box.before(lastLock, lastKey);
+//    const idKey = nacl.box.before(recipientPub, mySecretKey);
+    const idKey = nacl.box.before(lastLock, mySecretKey);
+
+    const cipher2 = nacl.secretbox(msgKey, nonce24, sharedKey);
+    const idTag = nacl.secretbox(recipientSigningPub, nonce24, idKey).slice(0, 8);
+
+    let newLockCipher;
+    if (turnstring !== 'lock') {
+      newLockCipher = nacl.secretbox(makePub(lastKey), nonce24, idKey); // Reuse lastKey as the new Lock key for the next turn, if a message has been sent already
+    } else {
+      newLockCipher = nacl.secretbox(makePub(secdum), nonce24, idKey);  //store new key if truly a new turn
+    }
+
+    // FIX 2: Update the global entry in-place
+    if (!entry.ro) entry.ro = {};
+
+    if (turnstring === 'lock' || !lastKeyCipher) {
+      entry.ro.lastkey = keyEncrypt(secdum, storageKey);
+    }
+
+//    if (!isReset) {
+      entry.ro.turn = 'unlock';
+//    }
+    // No need to reassign: entry is already a reference to window.locDir[recipientEmail]
+
+    // FIX 3: Trigger the global save
+    syncLocDir().catch(err => console.error("Failed to sync locDir:", err));
+    console.log("Read-once state updated and saved for:", recipientEmail);
+
+    return concatUi8([idTag, cipher2, typeByte, newLockCipher]);
+  }
+
+  return null;
 }
 
 /**
@@ -428,6 +506,7 @@ async function coreEncrypt(msgUint8, settings) {
       const common = await prepareCommonData(settings.masterPwd, settings.myEmail || userData?.crypt?.email || "", null);
       mySecretKey = common.myKey;
       base36Lock = common.base36Lock;
+      storageKey = common.storageKey;
     }
 
     const msgKey = nacl.randomBytes(32);
@@ -472,8 +551,12 @@ async function coreEncrypt(msgUint8, settings) {
       }
     };
 
+    // Resolve all selected recipients to their locks
     for (const sel of settings.selectedRecipients) {
       if (sel.toLowerCase() === "me") {
+        // SKIP adding "Me" if we are in Read-once mode (56)
+        if (settings.mode === 56) continue;
+
         const myLock = base36Lock || myStoredLock;
         if (myLock && isStrictLock(myLock)) finalLocks.add(myLock);
         continue;
@@ -484,10 +567,31 @@ async function coreEncrypt(msgUint8, settings) {
     // --- 2. Convert the unique Locks into encrypted Slots ---
     const recipientSlots = [];
     for (const lockB36 of finalLocks) {
-      const recipientUint8 = ezLockToUint8(lockB36);
-      if (recipientUint8) {
-        const slot = encryptForRecipientWithLock(recipientUint8, nonce24, msgKey, mySecretKey, settings.mode);
-        if (slot) recipientSlots.push(slot);
+      // 1. Find the email associated with this lock in locDir
+      let recipientEmail = "";
+      for (const [email, data] of Object.entries(locDir)) {
+        if (data.lock === lockB36) {
+          recipientEmail = email;
+          break;
+        }
+      }
+
+      // 2. Convert the lock to Uint8Array for the crypto functions
+      const recipientUint8 = nacl.util.decodeBase64(changeBase(lockB36, base36, base64, true));
+
+      // 3. Call our refactored function with the email context
+      const slot = encryptForRecipientWithLock(
+        recipientUint8,
+        nonce24,
+        msgKey,
+        mySecretKey,
+        storageKey,
+        settings.mode,
+        recipientEmail // Now the function can manage the ratchet state
+      );
+
+      if (slot) {
+        recipientSlots.push(slot);
       }
     }
 
@@ -520,12 +624,12 @@ async function encryptToFile() {
   const statusMsg = document.getElementById('encryptMsg');
   const composeBox = document.getElementById('composeBox');
   const lockList = document.getElementById('lockList');
-  
+
   // --- MODIFIED: Handle three modes instead of just isAnon ---
   let mode = 72; // Default to Signed ('S')
   if (document.getElementById('anonMode')?.checked) mode = 0;   // Anonymous ('A')
   if (document.getElementById('onceMode')?.checked) mode = 56;  // Read-once ('O')
-  
+
   const decoyToggle = document.getElementById('decoyModeToggle');
   const decoyArea = document.getElementById('decoyMessageArea');
 

@@ -227,8 +227,8 @@ async function encryptAndStoreVaultPwd(plainPwd, host) {
   }
 
   try {
-    const salt = await wiseHash(masterPwd, host);
-    const ciphertext = await keyEncrypt(plainPwd, salt);
+    const key = await wiseHash(masterPwd, host);
+    const ciphertext = await keyEncrypt(plainPwd, key);
 
     await setVaultPwd(host, ciphertext);
     alert("Password stored.");
