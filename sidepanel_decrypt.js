@@ -79,7 +79,7 @@ function decryptUniversal(blob) {
     return;
   }
 
-  // REMOVED: pendingFileBytes check. We are back to text-only.
+  // 3. Call the refactored decryption pipeline
   continueDecrypt(blob, masterPwd, myEmail);
 }
 
@@ -112,7 +112,7 @@ async function continueDecrypt(input, masterPwd, myEmail) {
     if (marker === 128) type = "g";
     else if (marker === 0) type = "A";
     else if (marker === 72) type = "S";
-    else if (marker === 56) type = "O"; // Added: Read-once mode ('O')
+    else if (marker === 56) type = "O";
     else type = String.fromCharCode(marker); // Fallback for ASCII-based markers
 
     // 3. ROUTE: Pass the binary bytes to the handlers
@@ -421,7 +421,7 @@ function getStoredEphemeralKey(recipientName) {
  * Tries direct sender lookup via ezLock, then falls back to trying all known senders.
  *
  * @param {Uint8Array} cipherText - The full decoded ciphertext.
-  * @param {Object} parsed - The result from extractEmbeddedLock (hasLock, ezLock, etc.).
+ * @param {Object} parsed - The result from extractEmbeddedLock (hasLock, ezLock, etc.).
  * @param {Object} commonData - Data from prepareCommonData (myKey, myLockbin, etc.).
  * @returns {Promise<{ success: boolean, msgKey?: Uint8Array, theirEmail?: string, error?: string }>}
  */
@@ -459,10 +459,8 @@ async function handleOnceMode(cipherInput, parsed, commonData) {
         const matchedSlot = findEncryptedMessageKey(recipients, cipherData, idTag, 105, parsed.ezLock);
 
         if (matchedSlot) {
-          const theirLockB64 = changeBase(parsed.ezLock, base36, base64, true);
-          const result = await tryDecryptWithSenderForReadOnce(
+          const result = await tryReadOnceDecrypt(
             matchedSlot.senderName,
-            theirLockB64,
             matchedSlot.slotData,
             idKey,
             nonce24,
@@ -475,7 +473,7 @@ async function handleOnceMode(cipherInput, parsed, commonData) {
           }else{
             return { 
         success: false, 
-        error: `Read-once error: This message from ${matchedSlot.senderName} has already been read or is out of sync. Read-once messages can only be decrypted once.` 
+        error: `Read-once error: This message from ${matchedSlot.senderName} has already been read or is out of sync. Reset this sender in the latter case.` 
       };
           }
         }
@@ -489,7 +487,6 @@ async function handleOnceMode(cipherInput, parsed, commonData) {
       const senderLock = ezLockToUint8(data.lock);
       if (!senderLock) continue;
 
-//      const senderName = findNameByLock(parsed.ezLock) || "Unknown Sender";
       const lastKeyCipher = getStoredEphemeralKey(email);
       let idKey;
       if(lastKeyCipher) {
@@ -497,17 +494,15 @@ async function handleOnceMode(cipherInput, parsed, commonData) {
       } else {
         idKey = makeShared(ed2curve.convertPublicKey(senderLock), myKey);
       }
-//      const sharedKey = makeShared(ed2curve.convertPublicKey(senderLock), myKey);
+
       const idTag = nacl.secretbox(stuffForId, nonce24, idKey).slice(0, 8);
 
       // Use the standard utility with 105-byte slot size
       const matchedSlot = findEncryptedMessageKey(recipients, cipherData, idTag, 105, data.lock);
 
       if (matchedSlot) {
-        const theirLockB64 = changeBase(data.lock, base36, base64, true);
-        const result = await tryDecryptWithSenderForReadOnce(
+        const result = await tryReadOnceDecrypt(
           email,
-          theirLockB64,
           matchedSlot.slotData,
           idKey,
           nonce24,
@@ -520,7 +515,7 @@ async function handleOnceMode(cipherInput, parsed, commonData) {
         }else{
           return { 
             success: false, 
-            error: `Read-once error: This message from ${email} has already been read or is out of sync. Read-once messages can only be decrypted once.` 
+            error: `Read-once error: This message from ${email} has already been read or is out of sync. Reset this sender in the latter case.` 
           };
         }
       }
@@ -543,9 +538,8 @@ async function handleOnceMode(cipherInput, parsed, commonData) {
  * @returns {Promise<{ success: boolean, msgKey?: Uint8Array, theirEmail?: string, error?: string }>}
  */
 // New signature for Read-once mode
-async function tryDecryptWithSenderForReadOnce(
+async function tryReadOnceDecrypt(
   senderName,
-  theirLockB64,
   matchedData,
   idKey,
   nonce24,
@@ -566,17 +560,11 @@ async function tryDecryptWithSenderForReadOnce(
   const newLockCipher = matchedData.slice(49, 97); // 48 bytes
 
   // 2. Retrieve ephemeral data from locDir for this sender
-//  const theirEmail = findNameByLock(theirLockB64) || "Unknown Sender";
-  const entry = window.locDir[senderName] || { lock: changeBase(theirLockB64, base64, base36, true), ro: { lastkey: null, lastlock: null, turn: null } };
+  const entry = window.locDir[senderName];
   const lastKeyCipher = entry.ro?.lastkey;
   const lastLockCipher = entry.ro?.lastlock;
 
   // 3. Decrypt the new ephemeral lock sent by the sender
-  const theirLockBin = nacl.util.decodeBase64(theirLockB64);
-  const theirPubCurve = ed2curve.convertPublicKey(theirLockBin);
-
-//  const idKey = nacl.box.before(theirPubCurve, myKey);  //permanent? or should it be lastLock?
-
   const newLockBin = nacl.secretbox.open(newLockCipher, nonce24, idKey);
 
   if (!newLockBin) {
@@ -651,134 +639,18 @@ async function tryDecryptWithSenderForReadOnce(
     senderName: senderName
   };
 }
-/*
-async function tryDecryptWithSender(theirEmail, theirLockB64, binaryData, commonData) {
-  const { myKey, myLockbin, storageKey } = commonData;
-  const { nonce24, recipientSlots } = binaryData;
 
-  // 1. Find the correct slot for "Me" using the ID tag
-  let targetSlot = null;
-  for (const slot of recipientSlots) {
-    // Validate slot length for Read-once mode
-    if (slot.length !== 89) continue;
-
-    const idTag = slot.slice(0, 8);
-
-    // Derive the ID key using the potential sender's lock and our secret key
-    const theirLockBin = nacl.util.decodeBase64(theirLockB64);
-    const theirPubCurve = ed2curve.convertPublicKey(theirLockBin);
-    if (!theirPubCurve) continue; // Invalid key, skip
-
-    const idKey = nacl.box.before(theirPubCurve, myKey);
-
-    // Generate the expected ID tag
-    const expectedIdTag = nacl.secretbox(myLockbin, nonce24, idKey).slice(0, 8);
-
-    // Compare ID tags
-    if (nacl.verify(idTag, expectedIdTag)) {
-      targetSlot = slot;
-      break;
-    }
-  }
-
-  // If no matching slot, this sender is not the intended recipient
-  if (!targetSlot) {
-    return { success: false, error: "ID tag mismatch." };
-  }
-
-  // 2. Parse the slot
-  const cipher2 = targetSlot.slice(8, 48);     // 40 bytes
-  const typeByte = targetSlot[48];             // 1 byte
-  const newLockCipher = targetSlot.slice(49, 89); // 40 bytes
-
-  // 3. Retrieve ephemeral data from locDir for this sender
-  const entry = locDir[theirEmail] || { lock: theirLockB64, ro: { lastkey: null, lastlock: null, turn: null } };
-  const lastKeyCipher = entry.ro?.lastkey;
-  const lastLockCipher = entry.ro?.lastlock;
-
-  // 4. Decrypt the new ephemeral lock sent by the sender
-  const theirLockBin = nacl.util.decodeBase64(theirLockB64);
-  const theirPubCurve = ed2curve.convertPublicKey(theirLockBin);
-  const idKey = nacl.box.before(theirPubCurve, myKey);
-  const newLockBin = nacl.secretbox.open(newLockCipher, nonce24, idKey);
-
-  if (!newLockBin) {
-    return { success: false, error: "Failed to decrypt the new ephemeral lock from the sender." };
-  }
-
-  // 5. Determine decryption strategy based on typeByte
-  let sharedKey;
-  if (typeByte === 172) { // Reset
-    console.log(`Read-once message from ${theirEmail}: Reset Mode`);
-    const agree = confirm('If you go ahead, the current Read-once conversation with the sender will be reset. This may be OK if this is a new message, but if it is an old one the conversation will go out of sync');
-    if (!agree) return { success: false, error: "User aborted reset." };
-
-    sharedKey = nacl.box.before(newLockBin, myKey); // Use our permanent key
-
-    // Clear our stored ephemeral data
-    if (!entry.ro) entry.ro = {};
-    entry.ro.lastkey = null;
-    entry.ro.lastlock = null;
-    entry.ro.turn = null;
-
-  } else if (typeByte === 164) { // PFS
-    console.log(`Read-once message from ${theirEmail}: PFS Mode`);
-    if (!lastKeyCipher) {
-      return { success: false, error: "Missing last ephemeral key for PFS decryption." };
-    }
-    const lastKey = keyDecrypt(lastKeyCipher, storageKey, true);
-    sharedKey = nacl.box.before(newLockBin, lastKey); // Use our last ephemeral key
-
-  } else if (typeByte === 160) { // Normal Read-once
-    console.log(`Read-once message from ${theirEmail}: Normal Mode`);
-    if (!lastKeyCipher) {
-      return { success: false, error: "Missing last ephemeral key for normal Read-once decryption." };
-    }
-    const lastKey = keyDecrypt(lastKeyCipher, storageKey, true);
-
-    // Get the last lock we used to encrypt to them (or use the new one if none)
-    let lastLockBin;
-    if (lastLockCipher) {
-      lastLockBin = keyDecrypt(lastLockCipher, storageKey, true);
-    } else {
-      lastLockBin = newLockBin; // Fallback
-    }
-    sharedKey = nacl.box.before(lastLockBin, lastKey); // Use our last key and their last lock
-
-  } else {
-    return { success: false, error: `Unknown Read-once message type byte: ${typeByte}` };
-  }
-
-  // 6. Decrypt the message key
-  const msgKey = nacl.secretbox.open(cipher2, nonce24, sharedKey);
-  if (!msgKey) {
-    return { success: false, error: "Failed to decrypt the message key with the derived shared key." };
-  }
-
-  // 7. Update locDir state for our next reply
-  if (!entry.ro) entry.ro = {};
-  entry.ro.lastlock = keyEncrypt(newLockBin, storageKey); // Encrypt before storing
-  entry.ro.turn = 'lock'; // It's now our turn to send
-  locDir[theirEmail] = entry;
-
-  // Persist changes
-  await syncLocDir();
-
-  console.log(`Read-once decryption successful for ${theirEmail}. locDir updated.`);
-  return { success: true, msgKey, theirEmail };
-}
-  */
-
+// Centralized decryption function for the actual message payload, used by all modes after obtaining the message key.
 async function decryptPayload(cipher, nonce, msgKey) {
   const plain = nacl.secretbox.open(cipher, nonce, msgKey);
   if (!plain) throw new Error("Failed to decrypt message");
 
-  // NEW: If exactly 32 bytes, it's a Folder Key. Return raw binary.
+  // If exactly 32 bytes, it's a Folder Key. Return raw binary.
   if (plain.length === 32) {
     return plain;
   }
 
-  // 1. Check if it's a Binary Container (new format)
+  // 1. Check if it's a Binary Container
   if (plain.length >= 6) {
     const view = new DataView(plain.buffer, plain.byteOffset);
     const textLen = view.getUint32(0);
@@ -938,18 +810,8 @@ function displayResult(content, modeLabel, senderName) {
   box.focus();
 }
 
-/*
-// Helper function to prompt user to select sender Lock from stored Locks
-function promptUserToSelectSenderLock(locDir, callback) {
-  alert("Sender Lock selection UI not fully implemented yet.");
-  // Filter to ensure we only pick keys that have a lock property
-  const validNames = Object.keys(locDir).filter(name => locDir[name].lock);
-  callback(validNames[0]);
-}
-*/
-
 let pendingLock = null;
-
+// 3. The Prompt Function
 function promptForSenderName(theirLockB36) {
   pendingLock = theirLockB36;
   const overlay = document.getElementById("sender-prompt-overlay");
@@ -1150,7 +1012,6 @@ async function processFileDecryption(fileUint8, outName) {
         setCryptoMode("decrypt");
         hideCard(document.getElementById('master-password-section'));
 
-        // --- NEW DETAILED REPORTING ---
         reportCryptoSuccess("decrypt", {
           type: "Message",
           length: content.length,
@@ -1163,7 +1024,6 @@ async function processFileDecryption(fileUint8, outName) {
       const data = (decrypted instanceof Uint8Array) ? decrypted : new TextEncoder().encode(decrypted);
       triggerDownload(data, outName);
 
-      // --- NEW DETAILED REPORTING ---
       reportCryptoSuccess("decrypt", {
         type: `File (${outName})`,
         length: data.length
@@ -1195,14 +1055,10 @@ async function continueDecryptBinary(uint8) {
       // 3. Focus the input for the user
       mpInput?.focus();
     }
-
-    //    throw new Error("Please enter your Master Password and try again.");
   }
 
   const storage = await chrome.storage.sync.get([currentHost]);
   const myEmail = storage[currentHost]?.crypt?.email || "";
-
-  //  const b64 = nacl.util.encodeBase64(uint8).replace(/=+$/, '');
 
   return await continueDecrypt(uint8, mp, myEmail);
 }

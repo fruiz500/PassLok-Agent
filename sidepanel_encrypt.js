@@ -65,10 +65,10 @@ function encryptForRecipientWithLock(recipientSigningPub, nonce24, msgKey, mySec
   else if (mode === 56) {
     // FIX 1: Always read from the GLOBAL locDir
     if (!window.locDir[recipientEmail]) {
-        window.locDir[recipientEmail] = { 
-            lock: changeBase(nacl.util.encodeBase64(recipientSigningPub), base64, base36, true),
-            ro: { lastkey: null, lastlock: null, turn: null } 
-        };
+      window.locDir[recipientEmail] = {
+        lock: changeBase(nacl.util.encodeBase64(recipientSigningPub), base64, base36, true),
+        ro: { lastkey: null, lastlock: null, turn: null }
+      };
     }
     const entry = window.locDir[recipientEmail]; // Reference the global entry
 
@@ -107,7 +107,7 @@ function encryptForRecipientWithLock(recipientSigningPub, nonce24, msgKey, mySec
     }
 
     const sharedKey = nacl.box.before(lastLock, lastKey);
-//    const idKey = nacl.box.before(recipientPub, mySecretKey);
+
     const idKey = nacl.box.before(lastLock, mySecretKey);
 
     const cipher2 = nacl.secretbox(msgKey, nonce24, sharedKey);
@@ -127,10 +127,7 @@ function encryptForRecipientWithLock(recipientSigningPub, nonce24, msgKey, mySec
       entry.ro.lastkey = keyEncrypt(secdum, storageKey);
     }
 
-//    if (!isReset) {
-      entry.ro.turn = 'unlock';
-//    }
-    // No need to reassign: entry is already a reference to window.locDir[recipientEmail]
+    entry.ro.turn = 'unlock';
 
     // FIX 3: Trigger the global save
     syncLocDir().catch(err => console.error("Failed to sync locDir:", err));
@@ -269,8 +266,6 @@ async function startEncryption() {
         const lockToConvert = base36Lock || storage[currentHost]?.crypt?.lock || "";
 
         if (lockToConvert) {
-          // SURGICAL CHANGE: Remove changeBase since it's already Base36
-          // Just use the string directly.
           lockPrefix = lockToConvert + "//////";
         }
       }
@@ -431,7 +426,7 @@ async function processFileEncryption(fileUint8, outName) {
     const decoyToggle = document.getElementById('decoyModeToggle');
     const decoyArea = document.getElementById('decoyMessageArea');
 
-    // --- MODIFIED: Handle three modes instead of just isAnon ---
+    // ---Handle three modes instead of just isAnon ---
     let mode = 72; // Default to Signed ('S')
     if (document.getElementById('anonMode')?.checked) mode = 0;   // Anonymous ('A')
     if (document.getElementById('onceMode')?.checked) mode = 56;  // Read-once ('O')
@@ -458,7 +453,6 @@ async function processFileEncryption(fileUint8, outName) {
 }
 
 async function coreEncrypt(msgUint8, settings) {
-  // settings: { selectedRecipients, mode, masterPwd, myEmail, activeFolderKey, decoyText }
   let finalBin, modeLabel;
   let base36Lock = "";
   let suppressLock = false;
@@ -497,11 +491,11 @@ async function coreEncrypt(msgUint8, settings) {
     const myStoredLock = userData?.crypt?.lock || "";
 
     let mySecretKey, ephemeralPub = null;
-    if (settings.mode === 0) { // Anonymous mode
+    if (settings.mode === 0) {    // Anonymous mode
       const ephemeral = nacl.box.keyPair();
       mySecretKey = ephemeral.secretKey;
       ephemeralPub = ephemeral.publicKey;
-    } else { // Signed or Read-once mode
+    } else {      // Signed or Read-once mode
       if (!settings.masterPwd) throw new Error("Master password required.");
       const common = await prepareCommonData(settings.masterPwd, settings.myEmail || userData?.crypt?.email || "", null);
       mySecretKey = common.myKey;
@@ -658,7 +652,6 @@ async function encryptToFile() {
 
     const settings = {
       selectedRecipients: Array.from(lockList.selectedOptions).map(o => o.value.trim()).filter(s => s),
-      // --- MODIFIED: Pass mode instead of isAnon ---
       mode: mode,
       masterPwd: document.getElementById('m-pass')?.value,
       myEmail: "",
