@@ -473,7 +473,7 @@ async function handleOnceMode(cipherInput, parsed, commonData) {
           }else{
             return { 
         success: false, 
-        error: `Read-once error: This message from ${matchedSlot.senderName} has already been read or is out of sync. Reset this sender in the latter case.` 
+        error: `Read-once error: This data from ${matchedSlot.senderName} has already been read or is out of sync. Reset this sender in the latter case.` 
       };
           }
         }
@@ -515,7 +515,7 @@ async function handleOnceMode(cipherInput, parsed, commonData) {
         }else{
           return { 
             success: false, 
-            error: `Read-once error: This message from ${email} has already been read or is out of sync. Reset this sender in the latter case.` 
+            error: `Read-once error: This data from ${email} has already been read or is out of sync. Reset this sender in the latter case.` 
           };
         }
       }
@@ -617,7 +617,7 @@ async function tryReadOnceDecrypt(
   // 5. Decrypt the message key
   const msgKey = nacl.secretbox.open(cipher2, nonce24, sharedKey);
   if (!msgKey) {
-    return { success: false, error: "Failed to decrypt the message key with the derived shared key." };
+    return { success: false, error: "Failed to decrypt the data key with the derived shared key." };
   }
 
   // 6. Update locDir state for our next reply
