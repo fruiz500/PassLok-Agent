@@ -1,3 +1,78 @@
+// --- Global locDir Management ---
+
+// 1. The global directory object
+var locDir = {}; // Using var to ensure it's truly global
+
+// 2. Helper to persist the directory
+async function syncLocDir() {
+  return new Promise((resolve, reject) => {
+    chrome.storage.sync.set({ locDir }, () => {
+      if (chrome.runtime.lastError) {
+        console.error("Error syncing locDir:", chrome.runtime.lastError);
+        reject(chrome.runtime.lastError);
+      } else {
+        console.log("Global locDir synced to storage.");
+        resolve();
+      }
+    });
+  });
+}
+
+/**
+ * Loads the locDir from chrome.storage.sync into the global variable.
+ * Call this once during app initialization.
+ */
+async function loadLocDir() {
+  return new Promise((resolve, reject) => {
+    chrome.storage.sync.get(['locDir'], (result) => {
+      if (chrome.runtime.lastError) {
+        console.error("Error loading locDir:", chrome.runtime.lastError);
+        reject(chrome.runtime.lastError);
+      } else {
+        locDir = result.locDir || {};
+        console.log("Global locDir loaded from storage.");
+        resolve(locDir);
+      }
+    });
+  });
+}
+
+async function resetReadOnce(recipient) {
+  // 1. Remove from the in-memory locDir (global variable)
+  if (window.locDir && window.locDir[recipient]) {
+    delete window.locDir[recipient].ro;
+    console.log(`Deleted 'ro' key for ${recipient} from in-memory locDir.`);
+  } else {
+    console.log(`Recipient '${recipient}' not found in in-memory locDir.`);
+  }
+
+  // 2. Remove from synced storage
+  chrome.storage.sync.get("locDir", (result) => {
+    const locDir = result.locDir || {};
+
+    if (locDir[recipient]) {
+      delete locDir[recipient].ro;
+      console.log(`Deleted 'ro' key for ${recipient} from synced storage.`);
+
+      chrome.storage.sync.set({ locDir }, () => {
+        if (chrome.runtime.lastError) {
+          console.error("Error saving locDir:", chrome.runtime.lastError);
+        } else {
+          console.log("locDir successfully updated in sync storage.");
+        }
+      });
+    } else {
+      console.log(`Recipient '${recipient}' not found in synced locDir.`);
+    }
+  });
+}
+
+// 3. Explicitly make them global (good practice)
+window.locDir = locDir;
+window.syncLocDir = syncLocDir;
+window.loadLocDir = loadLocDir;
+window.resetReadOnce = resetReadOnce;
+
 //code for editing the directory entries (synth and locDir) in sync storage
 
 let currentMode = "synth";        //initial mode (can be 'synth' or 'locDir')
@@ -84,16 +159,25 @@ async function renderDirectory() {
         ? displayValue
         : JSON.stringify(displayValue);
 
-    item.innerHTML = `
+    let innerHTML = `
       <div style="flex: 1; overflow: hidden; text-overflow: ellipsis; margin-right: 10px;">
         <strong>${name}</strong><br>
         <span style="color: #666; font-family: monospace; font-size: 10px;">${previewText}</span>
       </div>
-      <div style="display: flex; gap: 5px;">
+      <div style="display: flex; gap: 5px; flex-shrink: 0;">
         <button class="edit-entry" data-name="${name}" data-value='${JSON.stringify(value)}' style="padding: 2px 5px; cursor: pointer;">Edit</button>
         <button class="delete-entry" data-name="${name}" style="padding: 2px 5px; cursor: pointer; color: red;">Del</button>
       </div>
     `;
+
+    // Add "Reset Read-once" button if 'ro' key exists
+    if (typeof value === 'object' && value !== null && value.ro) {
+  innerHTML += `&nbsp<button class="reset-ro-entry" data-name="${name}" title="Reset Read-once" style="padding: 2px 4px; cursor: pointer; color: #007bff; font-size: 10px; width: 45px; flex-shrink: 0;">Reset RO</button>`;
+}
+
+    innerHTML += `</div>`; // Close the button group div
+    item.innerHTML = innerHTML;
+
     container.appendChild(item);
   });
 
@@ -149,6 +233,17 @@ async function renderDirectory() {
         await chrome.storage.sync.set({ locDir });
       }
       renderDirectory();
+    });
+  });
+
+  // 6. Reset Read-once Logic
+  container.querySelectorAll(".reset-ro-entry").forEach((btn) => {
+    btn.addEventListener("click", async (e) => {
+      const name = e.target.dataset.name;
+      if (!confirm(`Reset Read-once conversation with ${name}? This will clear the ephemeral key chain.`)) return;
+
+      await resetReadOnce(name);
+      renderDirectory(); // Refresh the UI
     });
   });
 }
