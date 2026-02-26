@@ -245,9 +245,8 @@ async function updateUI(state) {
     enterNotesMode(currentHost);
   }
 
-  // Inside updateUI function in sidepanel_UI.js, around line 323
+  // After setting up the UI based on priority, ensure the crypto card listeners are attached
   if (masterSection) {
-    //  masterSection.classList.remove('hidden');
 
     const synthExtra = document.getElementById('synth-extra-inputs');
     const emailDisplay = document.getElementById('decrypt-email-display');
@@ -271,6 +270,17 @@ async function updateUI(state) {
     else {
       if (synthExtra) synthExtra.classList.add('hidden');
       if (emailDisplay) emailDisplay.classList.add('hidden');
+    }
+  }
+
+  // Ensure the add lock option is visible if we're in crypto mode
+  const addLockContainer = document.getElementById('add-lock-container');
+  if (addLockContainer) {
+    // Only show if there's a large input field on the page
+    if (state.hasLargeInputField) {
+      addLockContainer.classList.remove('hidden');
+    } else {
+      addLockContainer.classList.add('hidden');
     }
   }
 }
@@ -992,7 +1002,7 @@ document.getElementById('help-btn')?.addEventListener('click', () => {
   }
 
   // 2. Open the corresponding local help file
-  const helpFile = `help_${context}.html`;
+  const helpFile = `help/help_${context}.html`;
   chrome.tabs.create({ url: chrome.runtime.getURL(helpFile) });
 });
 

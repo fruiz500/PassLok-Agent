@@ -10,7 +10,7 @@
     "js": ["agent-core.js"]
   }],
   "web_accessible_resources": [{
-    "resources": ["help_synthesis.js", "help_encrypt.js", "help_decrypt.js", "help_directory.html", "help_general.js"],
+    "resources": ["help/help_synthesis.js", "help/help_encrypt.js", "help/help_decrypt.js", "help/help_directory.html", "help/help_general.js"],
     "matches": ["<all_urls>"]
   }]
 }
