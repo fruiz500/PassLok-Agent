@@ -4,7 +4,7 @@
 		@licstart  The following is the entire license notice for the
 		JavaScript code in this page.
 
-		Copyright (C) 2017  Francisco Ruiz
+		Copyright (C) 2026  Francisco Ruiz
 
 		The JavaScript code in this page is free software: you can
 		redistribute it and/or modify it under the terms of the GNU
@@ -67,24 +67,35 @@ function createOptimizedCanvas(width, height) {
 
 //this function does the PNG encoding as LSB in all channels except alpha, which is kept with original values
 
-function encodePNG(imageElement, msgBin, password, callback, encryptToggle, iter, msgBin2, password2, iter2) {
+/**
+ * Encodes a message into a PNG image using LSB steganography.
+ * @param {Object} options - Encoding options
+ * @param {HTMLImageElement} options.image - Cover image element
+ * @param {Uint8Array} options.data - Binary data to embed
+ * @param {string} options.password - Primary stego password
+ * @param {boolean} [options.skipEncrypt=false] - Skip noise addition
+ * @param {number} [options.iterations=1] - PRNG iterations
+ * @param {Uint8Array} [options.data2] - Optional second message
+ * @param {string} [options.password2] - Optional second password
+ * @param {number} [options.iterations2=1] - Second PRNG iterations
+ * @returns {Promise<string>} - Data URI of the stego image
+ */
+async function encodePNG({
+	image,
+	data,
+	password,
+	skipEncrypt = false,
+	iterations = 1,
+	data2,
+	password2,
+	iterations2 = 1
+}) {
 	return new Promise((resolve, reject) => {
-		let msgBytes;
-
-		// 1. Handle Input Formats
-		if (Array.isArray(msgBin)) {
-			msgBytes = legacyBitsToUint8Array(msgBin);
-		} else if (msgBin instanceof Uint8Array) {
-			msgBytes = msgBin;
-		} else {
-			const err = new Error("Data must be Uint8Array or legacy bit array");
-			if (callback) callback(err.message);
-			return reject(err);
-		}
+		let msgBytes = data;
 
 		try {
-			// 2. Setup Canvas
-			if (!imageElement || !imageElement.naturalWidth) {
+			// 1. Setup Canvas
+			if (!image || !image.naturalWidth) {
 				throw new Error('Invalid image element provided');
 			}
 
@@ -95,14 +106,14 @@ function encodePNG(imageElement, msgBin, password, callback, encryptToggle, iter
 				throw new Error('Failed to get canvas context');
 			}
 
-			shadowCanvas.width = imageElement.naturalWidth;
-			shadowCanvas.height = imageElement.naturalHeight;
-			shadowCtx.drawImage(imageElement, 0, 0, shadowCanvas.width, shadowCanvas.height);
+			shadowCanvas.width = image.naturalWidth;
+			shadowCanvas.height = image.naturalHeight;
+			shadowCtx.drawImage(image, 0, 0, shadowCanvas.width, shadowCanvas.height);
 
 			const imageData = shadowCtx.getImageData(0, 0, shadowCanvas.width, shadowCanvas.height);
 			const length = imageData.data.length;
 
-			// 3. Extract RGB coefficients from opaque pixels
+			// 2. Extract RGB coefficients from opaque pixels
 			const alphaData = new Uint8Array(length / 4);
 			let k = 0;
 			let coefficients = new Uint8Array(length / 4 * 3);
@@ -118,18 +129,16 @@ function encodePNG(imageElement, msgBin, password, callback, encryptToggle, iter
 			}
 			coefficients = coefficients.slice(0, k);
 
-			// 4. Prepare Message (Append EOF)
+			// 3. Prepare Message (Append EOF)
 			const finalMsgBytes = new Uint8Array(msgBytes.length + imgEOF.length);
 			finalMsgBytes.set(msgBytes);
 			finalMsgBytes.set(imgEOF, msgBytes.length);
 
-			// 5. Stego Logic (PRNG & Shuffle)
+			// 4. Stego Logic (PRNG & Shuffle)
 			const seed = password + length.toString() + 'png';
-			seedPRNG(seed, iter);
+			seedPRNG(seed, iterations);
 
 			const myPermutation = shuffleCoefficients(coefficients, 0);
-
-			const skipEncrypt = encryptToggle || false;
 
 			let processedBytes = skipEncrypt ? finalMsgBytes : addNoise(finalMsgBytes);
 
@@ -140,15 +149,15 @@ function encodePNG(imageElement, msgBin, password, callback, encryptToggle, iter
 				if (msg) throw new Error(msg);
 			});
 
-			// 6. Handle Second Message (Optional)
-			if (msgBin2) {
-				let msgBytes2 = Array.isArray(msgBin2) ? legacyBitsToUint8Array(msgBin2) : msgBin2;
+			// 5. Handle Second Message (Optional)
+			if (data2) {
+				let msgBytes2 = data2;
 				const finalMsgBytes2 = new Uint8Array(msgBytes2.length + imgEOF.length);
 				finalMsgBytes2.set(msgBytes2);
 				finalMsgBytes2.set(imgEOF, msgBytes2.length);
 
 				const seed2 = password2 + lastIndex.toString() + 'png';
-				seedPRNG(seed2, iter2);
+				seedPRNG(seed2, iterations2);
 
 				const myPermutation2 = shuffleCoefficients(coefficients, lastIndex + 1);
 
@@ -164,7 +173,7 @@ function encodePNG(imageElement, msgBin, password, callback, encryptToggle, iter
 
 			unShuffleCoefficients(coefficients, myPermutation, 0);
 
-			// 7. Reconstruct Image
+			// 6. Reconstruct Image
 			k = 0;
 			for (let i = 3; i < length; i += 4) {
 				const alphaIndex = Math.floor(i / 4);
@@ -177,15 +186,13 @@ function encodePNG(imageElement, msgBin, password, callback, encryptToggle, iter
 
 			shadowCtx.putImageData(imageData, 0, 0);
 
-			// 8. Finalize Output
+			// 7. Finalize Output
 			const dataUrl = shadowCanvas.toDataURL('image/png');
-			imageElement.src = dataUrl;
+			image.src = dataUrl;
 
-			if (callback) callback(true);
 			resolve(dataUrl);
 
 		} catch (error) {
-			if (callback) callback('Error encoding PNG: ' + error.message);
 			console.error('encodePNG error:', error);
 			reject(error);
 		}
@@ -194,10 +201,27 @@ function encodePNG(imageElement, msgBin, password, callback, encryptToggle, iter
 
 //decodes data stored in PNG image
 
-function decodePNG(imageElement, password, callback, encryptToggle, iter, password2, callback2, iter2) {
+/**
+ * Decodes a message from a PNG image.
+ * @param {Object} options - Decoding options
+ * @param {HTMLImageElement} options.image - Stego image element
+ * @param {string} options.password - Primary stego password
+ * @param {number} [options.iterations=1] - PRNG iterations
+ * @param {string} [options.password2] - Optional second password
+ * @param {number} [options.iterations2=1] - Second PRNG iterations
+ * @returns {Promise<Object>} - Decoded payload { primary: Uint8Array, secondary: Uint8Array|null }
+ */
+async function decodePNG({
+	image,
+	password,
+	iterations = 1,
+	password2,
+	iterations2 = 1
+}) {
 	return new Promise((resolve, reject) => {
 		try {
-			if (!imageElement || !imageElement.naturalWidth) {
+			// 1. Setup Canvas
+			if (!image || !image.naturalWidth) {
 				throw new Error('Invalid image element provided');
 			}
 
@@ -208,20 +232,19 @@ function decodePNG(imageElement, password, callback, encryptToggle, iter, passwo
 				throw new Error('Failed to get canvas context');
 			}
 
-			shadowCanvas.style.display = 'none';
-			shadowCanvas.width = imageElement.naturalWidth;
-			shadowCanvas.height = imageElement.naturalHeight;
-			shadowCtx.drawImage(imageElement, 0, 0, shadowCanvas.width, shadowCanvas.height);
+			shadowCanvas.width = image.naturalWidth;
+			shadowCanvas.height = image.naturalHeight;
+			shadowCtx.drawImage(image, 0, 0, shadowCanvas.width, shadowCanvas.height);
 
 			const imageData = shadowCtx.getImageData(0, 0, shadowCanvas.width, shadowCanvas.height);
 			const length = imageData.data.length;
 
-			// Extract RGB coefficients from opaque pixels
+			// 2. Extract RGB coefficients from opaque pixels
 			let k = 0;
 			let coefficients = new Uint8Array(length / 4 * 3);
 
 			for (let i = 3; i < length; i += 4) {
-				if (imageData.data[i] === 255) { // opaque pixel
+				if (imageData.data[i] === 255) {
 					for (let j = 0; j < 3; j++) {
 						coefficients[k++] = imageData.data[i - 3 + j];
 					}
@@ -229,37 +252,48 @@ function decodePNG(imageElement, password, callback, encryptToggle, iter, passwo
 			}
 			coefficients = coefficients.slice(0, k);
 
+			// 3. Stego Logic (PRNG & Shuffle)
 			const seed = password + length.toString() + 'png';
-
-			seedPRNG(seed, iter);
+			seedPRNG(seed, iterations);
 
 			const myPermutation = shuffleCoefficients(coefficients, 0);
 
-			const skipEncrypt = encryptToggle || false;
-
+			// 4. Extract Primary Message
+			// decodeFromCoefficients returns [Uint8Array, errorMsg, lastIndex]
 			const result = decodeFromCoefficients('png', 0, coefficients);
 
-			if (callback) callback(result[0], result[1]);
-
-			let result2 = null;
-			if (password2) {
-				const seed2 = password2 + result[2].toString() + 'png';
-				seedPRNG(seed2, iter2);
-				const myPermutation2 = shuffleCoefficients(coefficients, result[2] + 1);
-				result2 = decodeFromCoefficients('png', result[2] + 1, coefficients);
-				if (callback2) callback2(result2[0], result2[1]);
-				unShuffleCoefficients(coefficients, myPermutation2, result[2] + 1);
+			if (result[1] && result[1] !== 'Reveal successful') {
+				throw new Error(result[1]);
 			}
 
+			const primaryData = result[0];
+			const lastIndex = result[2];
+			let secondaryData = null;
+
+			// 5. Handle Second Message (Optional)
+			if (password2) {
+				const seed2 = password2 + lastIndex.toString() + 'png';
+				seedPRNG(seed2, iterations2);
+
+				const myPermutation2 = shuffleCoefficients(coefficients, lastIndex + 1);
+
+				const result2 = decodeFromCoefficients('png', lastIndex + 1, coefficients);
+				if (!result2[1]) {
+					secondaryData = result2[0];
+				}
+
+				unShuffleCoefficients(coefficients, myPermutation2, lastIndex + 1);
+			}
+
+			// Cleanup
 			unShuffleCoefficients(coefficients, myPermutation, 0);
 
 			resolve({
-				primary: { data: result[0], message: result[1] },
-				secondary: result2 ? { data: result2[0], message: result2[1] } : null
+				primary: primaryData,
+				secondary: secondaryData
 			});
 
 		} catch (error) {
-			if (callback) callback('Error decoding PNG: ' + error.message);
 			console.error('decodePNG error:', error);
 			reject(error);
 		}
@@ -269,124 +303,172 @@ function decodePNG(imageElement, password, callback, encryptToggle, iter, passwo
 // Global variables for js-steg compatibility
 var globalBin, jpgPassword, jpgIter, showError, skipEncrypt, globalBin2, jpgPassword2, jpgIter2;
 
-function encodeJPG(imageElement, msgBin, password, callback, encryptToggle, iter, msgBin2, password2, iter2) {
-	// Set globals for modifyCoefficients
-	globalBin = msgBin;
-	globalBin2 = msgBin2;
-	jpgPassword = password;
-	jpgPassword2 = password2;
-	jpgIter = iter;
-	jpgIter2 = iter2;
-	showError = callback;
-	skipEncrypt = encryptToggle || false;
+/**
+ * Encodes a message into a JPEG image using F5-like steganography.
+ * @param {Object} options - Encoding options
+ * @param {HTMLImageElement} options.image - Cover image element
+ * @param {Uint8Array} options.data - Binary data to embed
+ * @param {string} options.password - Primary stego password
+ * @param {boolean} [options.skipEncrypt=false] - Skip noise addition
+ * @param {number} [options.iterations=1] - PRNG iterations
+ * @param {Uint8Array} [options.data2] - Optional second message
+ * @param {string} [options.password2] - Optional second password
+ * @param {number} [options.iterations2=1] - Second PRNG iterations
+ * @returns {Promise<string>} - Data URI of the stego image
+ */
+async function encodeJPG({
+	image,
+	data,
+	password,
+	skipEncrypt = false,
+	iterations = 1,
+	data2,
+	password2,
+	iterations2 = 1
+}) {
+	return new Promise((resolve, reject) => {
+		// Set globals for js-steg compatibility
+		globalBin = data;
+		globalBin2 = data2;
+		jpgPassword = password;
+		jpgPassword2 = password2;
+		jpgIter = iterations;
+		jpgIter2 = iterations2;
+		skipEncrypt = skipEncrypt;
+		showError = (msg) => reject(new Error(msg)); // Use reject for error handling
 
-	const startEncoding = () => {
-		try {
-			if (!imageElement || !imageElement.src) throw new Error('No image provided');
+		const startEncoding = () => {
+			try {
+				if (!image || !image.src) throw new Error('No image provided');
 
-			if (imageElement.src.slice(11, 15).match(/gif;|png;/)) {
-				transparent2white(imageElement);
+				if (image.src.slice(11, 15).match(/gif;|png;/)) {
+					transparent2white(image);
+				}
+
+				jsSteg.reEncodeWithModifications(image.src, modifyCoefficients, (resultURI) => {
+					image.src = resultURI;
+					// Cleanup globals
+					globalBin = null;
+					globalBin2 = null;
+					jpgPassword = '';
+					jpgPassword2 = '';
+					showError = null;
+					resolve(resultURI);
+				});
+			} catch (error) {
+				console.error('encodeJPG error:', error);
+				reject(error);
 			}
+		};
 
-			// Call js-steg with global modifyCoefficients
-			jsSteg.reEncodeWithModifications(imageElement.src, modifyCoefficients, function (resultURI) {
-				imageElement.src = resultURI;
-				// Clear globals
-				globalBin = null;
-				globalBin2 = null;
-				jpgPassword = '';
-				jpgPassword2 = '';
-				showError = null;
-			});
-		} catch (error) {
-			console.error('encodeJPG error:', error);
-			if (callback) callback('Error encoding JPEG: ' + error.message);
+		if (image.complete && image.naturalWidth !== 0) {
+			startEncoding();
+		} else {
+			image.onload = startEncoding;
+			image.onerror = () => reject(new Error('Failed to load image for JPEG encoding'));
 		}
-	};
-
-	if (imageElement.complete && imageElement.naturalWidth !== 0) {
-		startEncoding();
-	} else {
-		imageElement.onload = startEncoding;
-		imageElement.onerror = () => callback('Failed to load image for JPEG encoding');
-	}
+	});
 }
 
 //this function gets the jpeg coefficients (first luma, then chroma) and extracts the hidden material. Stops when the 48-bit endText code is found
-var allCoefficients, permutation, permutation2;
+/**
+ * Decodes a message from a JPEG image.
+ * @param {Object} options - Decoding options
+ * @param {HTMLImageElement} options.image - Stego image element
+ * @param {string} options.password - Primary stego password
+ * @param {number} [options.iterations=1] - PRNG iterations
+ * @param {string} [options.password2] - Optional second password
+ * @param {number} [options.iterations2=1] - Second PRNG iterations
+ * @returns {Promise<Object>} - Decoded payload { primary: Uint8Array, secondary: Uint8Array|null }
+ */
+async function decodeJPG({
+	image,
+	password,
+	iterations = 1,
+	password2,
+	iterations2 = 1
+}) {
+	return new Promise((resolve, reject) => {
+		// Start the async process
+		jsSteg.getCoefficients(image.src, function (coefficients) {
+			try {
+				// 1. Validate coefficients
+				if (!coefficients || !coefficients[1] || !coefficients[2]) {
+					throw new Error('Invalid JPEG coefficients.');
+				}
 
-function decodeJPG(imageElement, password, callback, encryptToggle, iter, password2, callback2, iter2) {
-	try {
-		jsSteg.getCoefficients(imageElement.src, function (coefficients) {
-			const length = coefficients[1].length;
-			if (coefficients[2].length !== length) {
-				callback('', 'This image does not contain anything, or perhaps the password is wrong');
-				throw ('image is chroma subsampled');
-			}
+				const length = coefficients[1].length;
+				if (coefficients[2].length !== length) {
+					throw new Error('This image does not contain anything, or perhaps the password is wrong');
+				}
 
-			// 1. Keep the size at 3 planes
-			const rawLength = 3 * length * 64;
-			const rawCoefficients = new Int16Array(rawLength);
+				// 2. Linearize coefficients into a typed array
+				const rawLength = 3 * length * 64;
+				const rawCoefficients = new Int16Array(rawLength);
 
-			// 2. Use 1, 2, 3 for the library, but (index - 1) for the offset
-			for (let index = 1; index <= 3; index++) {
-				// index 1 -> offset 0
-				// index 2 -> offset 1 * length * 64
-				// index 3 -> offset 2 * length * 64
-				const planeOffset = (index - 1) * length * 64;
-
-				for (let i = 0; i < length; i++) {
-					const blockOffset = i * 64;
-					const block = coefficients[index][i];
-
-					// Safety check: if the library returns fewer blocks than expected
-					if (!block) break;
-
-					for (let j = 0; j < 64; j++) {
-						rawCoefficients[planeOffset + blockOffset + j] = block[j];
+				for (let index = 1; index <= 3; index++) {
+					const planeOffset = (index - 1) * length * 64;
+					const currentPlane = coefficients[index];
+					for (let i = 0; i < currentPlane.length; i++) {
+						const blockOffset = i * 64;
+						for (let j = 0; j < 64; j++) {
+							rawCoefficients[planeOffset + blockOffset + j] = currentPlane[i][j];
+						}
 					}
 				}
+
+				// 3. Remove zeros and prepare for decoding
+				let allCoefficients = removeZeros(rawCoefficients);
+
+				// 4. Seed PRNG and shuffle for primary message
+				const seed = password + allCoefficients.length.toString() + 'jpeg';
+				seedPRNG(seed, iterations);
+				const myPermutation = shuffleCoefficients(allCoefficients, 0);
+
+				// 5. Decode primary message
+				const result = decodeFromCoefficients('jpeg', 0, allCoefficients);
+
+				if (result[1] && result[1] !== 'Reveal successful') {
+					throw new Error(result[1]);
+				}
+
+				const primaryData = result[0];
+				const lastIndex = result[2];
+				let secondaryData = null;
+
+				// 6. Handle second message if password2 is provided
+				if (password2) {
+					const seed2 = password2 + lastIndex.toString() + 'jpeg';
+					seedPRNG(seed2, iterations2);
+					const myPermutation2 = shuffleCoefficients(allCoefficients, lastIndex + 1);
+
+					const result2 = decodeFromCoefficients('jpeg', lastIndex + 1, allCoefficients);
+					if (result2[1] && result2[1] !== 'Reveal successful') {
+						throw new Error(result2[1]);
+					}
+					if (result2[0]) {
+						secondaryData = result2[0];
+					}
+
+					unShuffleCoefficients(allCoefficients, myPermutation2, lastIndex + 1);
+				}
+
+				// 7. Cleanup
+				unShuffleCoefficients(allCoefficients, myPermutation, 0);
+				allCoefficients = null;
+
+				resolve({
+					primary: primaryData,
+					secondary: secondaryData
+				});
+
+			} catch (error) {
+				// This ensures any error inside the callback leads to a reject
+				console.error('decodeJPG error:', error);
+				reject(error);
 			}
-
-			// Remove zeros
-			let allCoefficients = removeZeros(rawCoefficients);
-
-			// Seed PRNG and shuffle
-			const seed = password + allCoefficients.length.toString() + 'jpeg';
-			seedPRNG(seed, iter);
-			const myPermutation = shuffleCoefficients(allCoefficients, 0);
-
-			const skipEncrypt = encryptToggle || false;
-
-			// Decode from coefficients
-			const result = decodeFromCoefficients('jpeg', 0, allCoefficients);
-
-			// If noise was added, decodeFromCoefficients should handle noise removal internally
-			// (Make sure decodeFromCoefficients uses byte-based addNoise as well)
-
-			callback(result[0], result[1]);
-
-			// Handle second password if provided
-			if (password2) {
-				const seed2 = password2 + result[2].toString() + 'jpeg';
-				seedPRNG(seed2, iter2);
-				const myPermutation2 = shuffleCoefficients(allCoefficients, result[2] + 1);
-				const result2 = decodeFromCoefficients('jpeg', result[2] + 1, allCoefficients);
-				callback2(result2[0], result2[1]);
-				unShuffleCoefficients(allCoefficients, myPermutation2, result[2] + 1);
-			}
-
-			unShuffleCoefficients(allCoefficients, myPermutation, 0);
-
-			// Clear local state
-			allCoefficients = null;
-			myPermutation = null;
-
 		});
-	} catch (error) {
-		console.error('decodeJPG error:', error);
-		if (callback) callback('', 'Error decoding JPEG: ' + error.message);
-	}
+	});
 }
 
 /**
@@ -394,8 +476,13 @@ function decodeJPG(imageElement, password, callback, encryptToggle, iter, passwo
  * - coefficients: coefficients[0] is an array of luminosity blocks, coefficients[1] and
  *   coefficients[2] are arrays of chrominance blocks. Each block has 64 "modes"
  */
+/**
+ * Modifies JPEG DCT coefficients to embed a message.
+ * Called by js-steg during re-encoding.
+ * @param {Array<Array<Int16Array>>} coefficients - 3D array of DCT coefficients
+ */
 function modifyCoefficients(coefficients) {
-	// Validate global state
+	// Validate global state (required for js-steg compatibility)
 	if (!globalBin) throw new Error("No message data provided to stego encoder");
 
 	// 1. Convert input message to bytes
@@ -431,29 +518,31 @@ function modifyCoefficients(coefficients) {
 	// 4. Remove zeros and prepare for stego
 	let allCoefficients = removeZeros(rawCoefficients);
 
+	// 5. Seed PRNG and shuffle for primary message
 	const seed = jpgPassword + allCoefficients.length.toString() + 'jpeg';
 	seedPRNG(seed, jpgIter);
-
 	let myPermutation = shuffleCoefficients(allCoefficients, 0);
 
-	// 5. Add noise (byte-based)
+	// 6. Add noise (byte-based)
 	let processedBytes = skipEncrypt ? finalMsgBytes : addNoise(finalMsgBytes);
 
-	// 6. Convert to legacy bits for encodeToCoefficients
+	// 7. Convert to legacy bits for encodeToCoefficients
 	const legacyMsgBin = uint8ArrayToLegacyBits(processedBytes);
 
 	const lastIndex = encodeToCoefficients('jpeg', legacyMsgBin, 0, allCoefficients, (msg) => {
 		if (showError) showError(msg);
-		throw ('insufficient cover image capacity');
+		throw new Error('insufficient cover image capacity');
 	});
 
-	// 7. Handle second message (if any)
+	// 8. Handle second message (if any)
 	if (globalBin2) {
 		let msgBytes2;
 		if (Array.isArray(globalBin2)) {
 			msgBytes2 = legacyBitsToUint8Array(globalBin2);
 		} else if (globalBin2 instanceof Uint8Array) {
 			msgBytes2 = globalBin2;
+		} else {
+			throw new Error("Second data must be Uint8Array or legacy bit array");
 		}
 
 		const finalMsgBytes2 = new Uint8Array(msgBytes2.length + imgEOF.length);
@@ -470,13 +559,13 @@ function modifyCoefficients(coefficients) {
 
 		encodeToCoefficients('jpeg', legacyMsgBin2, lastIndex + 1, allCoefficients, (msg) => {
 			if (showError) showError(msg);
-			throw ('insufficient cover image capacity');
+			throw new Error('insufficient cover image capacity');
 		});
 
 		unShuffleCoefficients(allCoefficients, myPermutation2, lastIndex + 1);
 	}
 
-	// 8. Unshuffle and reconstruct image
+	// 9. Unshuffle and reconstruct image
 	unShuffleCoefficients(allCoefficients, myPermutation, 0);
 
 	let j = 0;
@@ -496,7 +585,7 @@ function modifyCoefficients(coefficients) {
 		}
 	}
 
-	// Clear local refs
+	// Clear local refs to prevent memory leaks
 	allCoefficients = null;
 	myPermutation = null;
 }
@@ -596,28 +685,43 @@ function addNoise(byteArray) {
 }
 
 //convert binary array to decimal number
+/**
+ * Converts a bit array (0s and 1s) to a decimal number.
+ * @param {Array|Uint8Array} array - Array of bits
+ * @returns {number} - Decimal representation
+ */
 function binArray2dec(array) {
-	var length = array.length,
-		output = 0,
-		mult = 1;
+	const length = array.length;
+	let output = 0;
+	let mult = 1;
 
-	for (var i = 0; i < length; i++) {
+	for (let i = 0; i < length; i++) {
 		output += array[length - 1 - i] * mult;
-		mult = mult * 2
+		mult *= 2;
 	}
-	return output
+	return output;
 }
 
 //to get the parity of a number. Positive: 0 if even, 1 if odd. Negative: 0 if odd, 1 if even. 0 is even
+/**
+ * Calculates the steganographic parity of a coefficient.
+ * @param {number} number - The coefficient value
+ * @returns {number} - 0 or 1
+ */
 function stegParity(number) {
 	if (number >= 0) {
-		return number % 2
+		return number % 2;
 	} else {
-		return -(number - 1) % 2
+		// Specific F5 logic for negative coefficients
+		return -(number - 1) % 2;
 	}
 }
 
-//faster Boolean filter for array
+/**
+ * Filters out all zero values from a coefficient array.
+ * @param {Int16Array|Array} array - The source coefficients
+ * @returns {Int16Array} - A new array containing only non-zero values
+ */
 function removeZeros(array) {
 	const length = array.length;
 	let nonZeros = 0;
@@ -638,195 +742,92 @@ function removeZeros(array) {
 }
 
 //gets counts in the DCT AC histogram: 2's plus -2, 3's plus -3, outputs array containing the counts
+/**
+ * Counts occurrences of values 2, 3, -2, -3 in an array.
+ * @param {Int16Array|Array} array - Array of coefficients
+ * @returns {Array<number>} - [count of 2/-2, count of 3/-3]
+ */
 function partialHistogram(array) {
-	var output = [0, 0],
-		length = array.length;
+	const output = [0, 0];
+	const length = array.length;
 
-	for (var j = 0; j < length; j++) {
-		for (var i = 2; i <= 3; i++) {
-			if (array[j] == i || array[j] == -i) output[i - 2]++
+	for (let j = 0; j < length; j++) {
+		const val = array[j];
+		if (val === 2 || val === -2) {
+			output[0]++;
+		} else if (val === 3 || val === -3) {
+			output[1]++;
 		}
 	}
-	return output
+
+	return output;
 }
 
 //matrix encoding of allCoefficients with variable k, which is prepended to the message. Selectable for png or jpeg encoding.
-/*
-function encodeToCoefficients(type, inputBin, startIndex, coefficients, callback) {
-	// 1. Calculate capacity
-	const length = (startIndex === 0)
-		? coefficients.length - 222
-		: coefficients.length - startIndex - 4;
 
-	const rate = inputBin.length / length;
-	let k = 2;
-
-	if (inputBin.length > length) {
-		// Reset local variables on failure (caller should handle cleanup)
-		if (callback) callback(
-			(startIndex === 0)
-				? `This image can hide ${length} bits. But the box contains ${inputBin.length} bits`
-				: `This image can add a hidden message ${length} bits long. But the hidden message in the box has ${inputBin.length} bits`
-		);
-		return;
-	}
-
-	// 2. Determine k (matrix encoding parameter)
-	while (k / (Math.pow(2, k) - 1) > rate) k++;
-	k--;
-	if (k > 16) k = 16;
-
-	// 3. Encode k into the first 4 coefficients
-	const kCode = new Uint8Array(4);
-	for (let j = 0; j < 4; j++) kCode[3 - j] = ((k - 1) >> j) & 1;
-
-	if (type === 'jpeg') {
-		// JPEG-specific histogram adjustment
-		const count2to3 = partialHistogram(coefficients.slice(startIndex + 4));
-		const y = count2to3[1] / (count2to3[0] + count2to3[1]);
-		let ones = 0, minusones = 0;
-
-		for (let i = 0; i < 4; i++) {
-			const idx = startIndex + i;
-			const val = coefficients[idx];
-			if (val > 0) {
-				if (kCode[i] === 1 && stegParity(val) === 0) coefficients[idx]--;
-				else if (kCode[i] === 0 && stegParity(val) !== 0) {
-					coefficients[idx] = (val !== 1) ? val - 1 : -1;
-				}
-			} else {
-				if (kCode[i] === 0 && stegParity(val) !== 0) coefficients[idx]++;
-				else if (kCode[i] === 1 && stegParity(val) === 0) {
-					coefficients[idx] = (val !== -1) ? val + 1 : 1;
-				}
-			}
-		}
-	} else {
-		// PNG-specific k encoding
-		for (let i = 0; i < 4; i++) {
-			const idx = startIndex + i;
-			if (kCode[i] === 1 && stegParity(coefficients[idx]) === 0) coefficients[idx]++;
-			else if (kCode[i] === 0 && stegParity(coefficients[idx]) !== 0) coefficients[idx]--;
-		}
-	}
-
-	// 4. Encode actual data
-	const n = Math.pow(2, k) - 1;
-	const blocks = Math.ceil(inputBin.length / k);
-
-	// Helper to get bit from inputBin (supports Uint8Array or legacy array)
-	const getPayloadBit = (idx) => {
-		if (idx >= inputBin.length) return 0; // Padding
-		return (inputBin instanceof Uint8Array) ? getBit(inputBin, idx) : inputBin[idx];
-	};
-
-	for (let i = 0; i < blocks; i++) {
-		// Calculate inputNumber (decimal value of the k-bit block)
-		let inputNumber = 0;
-		for (let bitIdx = 0; bitIdx < k; bitIdx++) {
-			if (getPayloadBit(i * k + bitIdx)) {
-				inputNumber |= (1 << (k - 1 - bitIdx));
-			}
-		}
-
-		// Calculate hash of the cover block parity
-		let hash = 0;
-		for (let j = 1; j <= n; j++) {
-			const coeff = coefficients[startIndex + 4 + i * n + (j - 1)];
-			hash ^= (stegParity(coeff) * j);
-		}
-
-		const outputNumber = inputNumber ^ hash;
-
-		if (outputNumber !== 0) {
-			const pos = startIndex + 3 + i * n + outputNumber;
-			const val = coefficients[pos];
-
-			if (type === 'jpeg') {
-				// JPEG F5-style embedding with shrinkage/expansion logic
-				if (val > 0) {
-					if (val === 1) {
-						if (minusones <= 0) { coefficients[pos] = -1; ones--; minusones++; }
-						else { coefficients[pos] = 2; ones--; }
-					} else if (val === 2) {
-						if (ones <= 0) { coefficients[pos]--; ones++; }
-						else { coefficients[pos]++; }
-					} else {
-						coefficients[pos] += (Math.random() > y) ? -1 : 1;
-					}
-				} else if (val < 0) {
-					if (val === -1) {
-						if (ones <= 0) { coefficients[pos] = 1; minusones--; ones++; }
-						else { coefficients[pos] = -2; minusones--; }
-					} else if (val === -2) {
-						if (minusones <= 0) { coefficients[pos]++; minusones++; }
-						else { coefficients[pos]--; }
-					} else {
-						coefficients[pos] += (Math.random() > y) ? 1 : -1;
-					}
-				}
-			} else {
-				// PNG LSB embedding
-				if (val % 2 !== 0) coefficients[pos]--;
-				else coefficients[pos]++;
-			}
-		}
-	}
-
-	return startIndex + (blocks * n) + 3;
-}*/
-function encodeToCoefficients(type, inputBin, startIndex, coefficients, callback) {
+/**
+ * Encodes a message into JPEG/PNG coefficients using matrix encoding.
+ * @param {string} type - 'jpeg' or 'png'
+ * @param {Array<number>} inputBin - Message bits to encode (0/1 array)
+ * @param {number} startIndex - Starting index in coefficients array
+ * @param {Uint8Array|Int16Array} coefficients - Coefficients to modify
+ * @param {Function} onError - Callback for errors (used by legacy code)
+ * @returns {number} - Last index used in coefficients
+ */
+function encodeToCoefficients(type, inputBin, startIndex, coefficients, onError) {
 	// Validate inputs
 	if (!coefficients || !coefficients.length) {
-		return callback("No coefficients provided");
+		onError("No coefficients provided");
+		return startIndex;
 	}
 
-	var length = (startIndex === 0) ? coefficients.length - 222 : coefficients.length - startIndex - 4;
+	const maxBits = (startIndex === 0) ? coefficients.length - 222 : coefficients.length - startIndex - 4;
 
-	if (inputBin.length > length) {
-		if (startIndex === 0) {
-			callback('This image can hide ' + length.toString() + ' bits. But the box contains ' + inputBin.length.toString() + ' bits');
-		} else {
-			callback('This image can add a hidden message ' + length.toString() + ' bits long. But the hidden message in the box has ' + inputBin.length.toString() + ' bits');
-		}
-		return;
+	if (inputBin.length > maxBits) {
+		const errorMsg = startIndex === 0
+			? `This image can hide ${maxBits} bits. But the box contains ${inputBin.length} bits`
+			: `This image can add a hidden message ${maxBits} bits long. But the hidden message in the box has ${inputBin.length} bits`;
+		onError(errorMsg);
+		return startIndex;
 	}
 
-	// Determine k
-	var rate = inputBin.length / length;
-	var k = 2;
+	// Determine k for matrix encoding
+	const rate = inputBin.length / maxBits;
+	let k = 2;
 	while (k / (Math.pow(2, k) - 1) > rate) k++;
-	k--;
+	k = Math.min(k - 1, 16); // Cap at 16
 
-	if (k > 16) k = 16;
-	var kCode = new Array(4);
-	for (var j = 0; j < 4; j++) kCode[3 - j] = (k - 1 >> j) & 1;
+	const kCode = [];
+	for (let j = 0; j < 4; j++) {
+		kCode[3 - j] = (k - 1 >> j) & 1;
+	}
 
-	// JPEG-specific variables
-	var y, ones = 0, minusones = 0;
+	// JPEG-specific setup
+	let y = 0, ones = 0, minusones = 0;
 	if (type === 'jpeg') {
-		var count2to3 = partialHistogram(coefficients.slice(startIndex + 4));
+		const count2to3 = partialHistogram(coefficients.slice(startIndex + 4));
 		y = count2to3[1] / (count2to3[0] + count2to3[1]);
 	}
 
 	// Encode k into coefficients
 	if (type === 'jpeg') {
-		for (var i = 0; i < 4; i++) {
-			if (coefficients[startIndex + i] > 0) {
-				if (kCode[i] === 1 && stegParity(coefficients[startIndex + i]) === 0) {
+		for (let i = 0; i < 4; i++) {
+			const coeff = coefficients[startIndex + i];
+			if (coeff > 0) {
+				if (kCode[i] === 1 && stegParity(coeff) === 0) {
 					coefficients[startIndex + i]--;
-				} else if (kCode[i] === 0 && stegParity(coefficients[startIndex + i]) !== 0) {
-					if (coefficients[startIndex + i] !== 1) {
+				} else if (kCode[i] === 0 && stegParity(coeff) !== 0) {
+					if (coeff !== 1) {
 						coefficients[startIndex + i]--;
 					} else {
 						coefficients[startIndex + i] = -1;
 					}
 				}
 			} else {
-				if (kCode[i] === 0 && stegParity(coefficients[startIndex + i]) !== 0) {
+				if (kCode[i] === 0 && stegParity(coeff) !== 0) {
 					coefficients[startIndex + i]++;
-				} else if (kCode[i] === 1 && stegParity(coefficients[startIndex + i]) === 0) {
-					if (coefficients[startIndex + i] !== -1) {
+				} else if (kCode[i] === 1 && stegParity(coeff) === 0) {
+					if (coeff !== -1) {
 						coefficients[startIndex + i]++;
 					} else {
 						coefficients[startIndex + i] = 1;
@@ -835,7 +836,7 @@ function encodeToCoefficients(type, inputBin, startIndex, coefficients, callback
 			}
 		}
 	} else {
-		for (var i = 0; i < 4; i++) {
+		for (let i = 0; i < 4; i++) {
 			if (kCode[i] === 1 && stegParity(coefficients[startIndex + i]) === 0) {
 				coefficients[startIndex + i]++;
 			} else if (kCode[i] === 0 && stegParity(coefficients[startIndex + i]) !== 0) {
@@ -845,76 +846,81 @@ function encodeToCoefficients(type, inputBin, startIndex, coefficients, callback
 	}
 
 	// Encode the actual data
-	var n = Math.pow(2, k) - 1;
-	var blocks = Math.ceil(inputBin.length / k);
+	const n = Math.pow(2, k) - 1;
+	const blocks = Math.ceil(inputBin.length / k);
 
+	// Pad input to fit blocks
 	while (inputBin.length % k) inputBin.push(0);
 
-	for (var i = 0; i < blocks; i++) {
-		var inputBlock = inputBin.slice(i * k, (i * k) + k);
-		var inputNumber = binArray2dec(inputBlock);
-		var coverBlock = coefficients.slice(startIndex + 4 + i * n, startIndex + 4 + (i * n) + n);
-		var parityBlock = coverBlock.map(stegParity);
-		var hash = 0;
-		for (var j = 1; j <= n; j++) hash = hash ^ (parityBlock[j - 1] * j);
-		var outputNumber = inputNumber ^ hash;
+	for (let i = 0; i < blocks; i++) {
+		const inputBlock = inputBin.slice(i * k, (i * k) + k);
+		const inputNumber = binArray2dec(inputBlock);
+		const coverBlock = coefficients.slice(startIndex + 4 + i * n, startIndex + 4 + (i * n) + n);
+		const parityBlock = coverBlock.map(stegParity);
+		let hash = 0;
+		for (let j = 1; j <= n; j++) hash ^= (parityBlock[j - 1] * j);
+		const outputNumber = inputNumber ^ hash;
 
 		if (outputNumber) {
+			const coeffIndex = startIndex + 3 + i * n + outputNumber;
+			const coeff = coefficients[coeffIndex];
+
 			if (type === 'jpeg') {
-				if (coverBlock[outputNumber - 1] > 0) {
-					if (coverBlock[outputNumber - 1] === 1) {
+				if (coeff > 0) {
+					if (coeff === 1) {
 						if (minusones <= 0) {
-							coefficients[startIndex + 3 + i * n + outputNumber] = -1;
+							coefficients[coeffIndex] = -1;
 							ones--;
 							minusones++;
 						} else {
-							coefficients[startIndex + 3 + i * n + outputNumber] = 2;
+							coefficients[coeffIndex] = 2;
 							ones--;
 						}
-					} else if (coverBlock[outputNumber - 1] === 2) {
+					} else if (coeff === 2) {
 						if (ones <= 0) {
-							coefficients[startIndex + 3 + i * n + outputNumber]--;
+							coefficients[coeffIndex]--;
 							ones++;
 						} else {
-							coefficients[startIndex + 3 + i * n + outputNumber]++;
+							coefficients[coeffIndex]++;
 						}
 					} else {
 						if (Math.random() > y) {
-							coefficients[startIndex + 3 + i * n + outputNumber]--;
+							coefficients[coeffIndex]--;
 						} else {
-							coefficients[startIndex + 3 + i * n + outputNumber]++;
+							coefficients[coeffIndex]++;
 						}
 					}
-				} else if (coverBlock[outputNumber - 1] < 0) {
-					if (coverBlock[outputNumber - 1] === -1) {
+				} else if (coeff < 0) {
+					if (coeff === -1) {
 						if (ones <= 0) {
-							coefficients[startIndex + 3 + i * n + outputNumber] = 1;
+							coefficients[coeffIndex] = 1;
 							minusones--;
 							ones++;
 						} else {
-							coefficients[startIndex + 3 + i * n + outputNumber] = -2;
+							coefficients[coeffIndex] = -2;
 							minusones--;
 						}
-					} else if (coverBlock[outputNumber - 1] === -2) {
+					} else if (coeff === -2) {
 						if (minusones <= 0) {
-							coefficients[startIndex + 3 + i * n + outputNumber]++;
+							coefficients[coeffIndex]++;
 							minusones++;
 						} else {
-							coefficients[startIndex + 3 + i * n + outputNumber]--;
+							coefficients[coeffIndex]--;
 						}
 					} else {
 						if (Math.random() > y) {
-							coefficients[startIndex + 3 + i * n + outputNumber]++;
+							coefficients[coeffIndex]++;
 						} else {
-							coefficients[startIndex + 3 + i * n + outputNumber]--;
+							coefficients[coeffIndex]--;
 						}
 					}
 				}
 			} else {
-				if (coverBlock[outputNumber - 1] % 2) {
-					coefficients[startIndex + 3 + i * n + outputNumber]--;
+				// PNG LSB
+				if (coeff % 2) {
+					coefficients[coeffIndex]--;
 				} else {
-					coefficients[startIndex + 3 + i * n + outputNumber]++;
+					coefficients[coeffIndex]++;
 				}
 			}
 		}
@@ -925,6 +931,13 @@ function encodeToCoefficients(type, inputBin, startIndex, coefficients, callback
 
 //matrix decode of allCoefficients, where k is extracted from the start of the message. Selectable for png or jpeg encoding.
 
+/**
+ * Decodes a message from JPEG/PNG coefficients using matrix decoding.
+ * @param {string} type - 'jpeg' or 'png'
+ * @param {number} startIndex - Starting index in coefficients array
+ * @param {Uint8Array|Int16Array} coefficients - Coefficients to decode from
+ * @returns {Array} - [Uint8Array data, string errorMsg, number lastIndex]
+ */
 function decodeFromCoefficients(type, startIndex, coefficients) {
 	// 1. Extract k
 	const length = (startIndex === 0)
@@ -1000,7 +1013,7 @@ function decodeFromCoefficients(type, startIndex, coefficients) {
 	}
 
 	if (!found) {
-		return ['', 'This image does not contain anything, or perhaps the password is wrong', 0];
+		return [null, 'This image does not contain anything, or perhaps the password is wrong', 0];
 	}
 
 	// 5. Finalize results
@@ -1010,57 +1023,49 @@ function decodeFromCoefficients(type, startIndex, coefficients) {
 	const bitsUsed = (actualDataBytes.length + eofLen) * 8;
 	const blocksUsed = Math.ceil(bitsUsed / k);
 
-	return [actualDataBytes, 'Reveal successful', startIndex + (blocksUsed * n) + 3];
+	return [actualDataBytes, null, startIndex + (blocksUsed * n) + 3];
 }
 
 //extract text from either tye of image
 
-function decodeImage(imageElement, password, callback, skipEncrypt, iter, password2, callback2, iter2) {
-	return new Promise((resolve, reject) => {
-		const imgType = imageElement.src.slice(11, 15); // e.g., "png;" or "jpeg"
+/**
+ * Dispatches decoding with all available stego options.
+ * @param {Object} options - Decoding options
+ * @param {HTMLImageElement} options.image - Stego image element
+ * @param {string} options.password - Primary stego password
+ * @param {boolean} [options.skipEncrypt=false] - If true, skips noise removal
+ * @param {number} [options.iterations=1] - PRNG iterations for primary
+ * @param {string} [options.password2] - Optional second password
+ * @param {number} [options.iterations2=1] - PRNG iterations for secondary
+ */
+async function decodeImage({
+	image,
+	password,
+	skipEncrypt = false,
+	iterations = 1,
+	password2 = null,
+	iterations2 = 1
+}) {
+	// Set the global skipEncrypt so decodeFromCoefficients knows whether to remove noise
+	window.skipEncrypt = skipEncrypt;
 
-		const wrapCallback = (cb, resolveKey) => {
-			return (data, msg) => {
-				if (cb) cb(data, msg);
-				if (resolveKey) {
-					resolve({ [resolveKey]: { data, message: msg } });
-				} else {
-					resolve({ primary: { data, message: msg } });
-				}
-			};
-		};
+	const imgType = image.src.slice(11, 15);
 
-		if (imgType === 'png;') {
-			decodePNG(
-				imageElement,
-				password,
-				wrapCallback(callback, 'primary'),
-				skipEncrypt,
-				iter,
-				password2,
-				wrapCallback(callback2, 'secondary'),
-				iter2
-			).then(result => {
-				resolve(result);
-			}).catch(reject);
-		} else if (imgType === 'jpeg') {
-			// Fallback to callback for now until decodeJPG is modernized
-			decodeJPG(
-				imageElement,
-				password,
-				wrapCallback(callback, 'primary'),
-				skipEncrypt,
-				iter,
-				password2,
-				wrapCallback(callback2, 'secondary'),
-				iter2
-			);
-		} else {
-			const err = new Error("Unsupported image type for decoding");
-			if (callback) callback(null, err.message);
-			reject(err);
-		}
-	});
+	const decodeOptions = {
+		image,
+		password,
+		iterations,
+		password2,
+		iterations2
+	};
+
+	if (imgType === 'png;') {
+		return await decodePNG(decodeOptions);
+	} else if (imgType === 'jpeg') {
+		return await decodeJPG(decodeOptions);
+	} else {
+		throw new Error("Unsupported image type for decoding");
+	}
 }
 
 //remove transparency and turn background white
@@ -1152,25 +1157,24 @@ function setBits(dest, startBit, sourceBits, lengthInBits) {
 }
 
 /**
- * Converts a Uint8Array of bits (0s and 1s) into a Uint8Array of bytes.
- * Matches the MSB-first order used in getBit.
- * 
+ * Converts a bit array (Uint8Array of 0s and 1s) into a byte array (Uint8Array).
  * @param {Uint8Array} bits - Array of 0s and 1s
- * @returns {Uint8Array} Array of actual bytes
+ * @returns {Uint8Array} - Byte array
  */
 function packBitsToBytes(bits) {
-	// bits is a Uint8Array of 0s and 1s
 	const byteCount = Math.floor(bits.length / 8);
 	const bytes = new Uint8Array(byteCount);
+
 	for (let i = 0; i < byteCount; i++) {
 		let byte = 0;
 		for (let j = 0; j < 8; j++) {
 			if (bits[i * 8 + j]) {
-				byte |= (1 << (7 - j)); // Must match the 7-j logic above
+				byte |= (1 << (7 - j));
 			}
 		}
 		bytes[i] = byte;
 	}
+
 	return bytes;
 }
 

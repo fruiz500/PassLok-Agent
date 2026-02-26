@@ -119,41 +119,12 @@ function bitsToBytes(bits) {
 }
 
 // --- Button Listeners ---
-/*
-// 1. Encrypt and Hide (PNG or JPG)
-async function handleStegoEncrypt(format) {
-    const imgPreview = document.getElementById('stego-image-preview');
-    const composeBox = document.getElementById('composeBox');
-    const textToEncrypt = composeBox.value || composeBox.innerText;
 
-    if (!textToEncrypt) {
-        alert("Please enter a message in the compose box first.");
-        return;
-    }
 
-    // Use the existing encryption logic but get raw bytes
-    // We'll call a helper that performs the core encryption
-    try {
-        const result = await coreEncrypt(textToEncrypt); // Assuming this returns {ciphertext: Uint8Array, ...}
-        const bits = bytesToBits(result.ciphertext);
-
-        const stegoPwd = prompt(`Enter stego password for ${format}:`);
-        if (stegoPwd === null) return;
-
-        const callback = (success, msg) => {
-            if (!success) alert("Stego error: " + msg);
-        };
-
-        if (format === 'PNG') {
-            encodePNG(imgPreview, bits, stegoPwd, callback);
-        } else {
-            encodeJPG(imgPreview, bits, stegoPwd, callback);
-        }
-    } catch (e) {
-        alert("Encryption failed: " + e.message);
-    }
-}*/
-
+/**
+ * Handles steganographic encryption for a given format (PNG/JPG).
+ * @param {string} format - 'PNG' or 'JPG'
+ */
 async function handleStegoEncrypt(format) {
     const imgPreview = document.getElementById('stego-image-preview');
 
@@ -162,12 +133,12 @@ async function handleStegoEncrypt(format) {
         return;
     }
 
-    // 1. Get payload (Keeping your current prompt for testing)
+    // 1. Get payload
     const textToEncrypt = prompt("Enter text to embed in the image:");
     if (!textToEncrypt) return;
 
-    // 2. Convert to bits (Legacy format for now)
-    const bits = textToBits(textToEncrypt);
+    // 2. Convert to Uint8Array (modern format)
+    const dataArray = nacl.util.decodeUTF8(textToEncrypt);
 
     // 3. Get password
     const stegoPwd = prompt(`Enter stego password for ${format}:`);
@@ -175,17 +146,33 @@ async function handleStegoEncrypt(format) {
 
     try {
         if (format === 'PNG') {
-            // 4. Await the encoding. 
-            // The function itself updates imgPreview.src and returns the dataURL
-            await encodePNG(imgPreview, bits, stegoPwd);
+            // 4. Await the modernized PNG encoding
+            const resultURI = await encodePNG({
+                image: imgPreview,
+                data: dataArray,
+                password: stegoPwd,
+                iterations: 1,
+                password2: null,
+                iterations2: 1
+            });
 
+            imgPreview.src = resultURI;
             alert("PNG updated with hidden data.");
         } else {
-            // JPG still uses callback for now
-            encodeJPG(imgPreview, bits, stegoPwd, (success, msg) => {
-                if (success) alert("JPG updated with hidden data.");
-                else alert("Stego error: " + msg);
+            // 5. Await the modernized JPG encoding
+            const resultURI = await encodeJPG({
+                image: imgPreview,
+                data: dataArray,
+                password: stegoPwd,
+                skipEncrypt: false,
+                iterations: 1,
+                data2: null,
+                password2: null,
+                iterations2: 1
             });
+
+            imgPreview.src = resultURI;
+            alert("JPG updated with hidden data.");
         }
     } catch (error) {
         alert("Stego error: " + error.message);
@@ -204,133 +191,171 @@ function bitsToText(bits) {
     return nacl.util.encodeUTF8(uint8Array);
 }
 
+/**
+ * Gathers user input for steganographic encryption.
+ * @returns {Promise<{data1: Uint8Array, pwd1: string, data2: Uint8Array|null, pwd2: string|null} | null>}
+ */
+async function getStegoEncryptionInputs() {
+    const payloadInput = prompt('Enter text to embed (use | for second message):');
+    if (!payloadInput) return null; // User canceled
+
+    const payload = payloadInput.trim();
+    if (payload === "") return null; // Empty input
+
+    const passwordInput = prompt('Enter stego password(s) (use | for second password):');
+    if (!passwordInput) return null; // User canceled
+
+    const passwords = passwordInput.trim();
+    if (passwords === "") return null; // Empty input
+
+    // Split and trim parts
+    const payloadParts = payload.split('|').map(p => p.trim());
+    const passwordParts = passwords.split('|').map(p => p.trim());
+
+    // Primary data and password (always required)
+    const data1 = nacl.util.decodeUTF8(payloadParts[0]);
+    const pwd1 = passwordParts[0];
+
+    // Secondary data and password: ONLY if both parts exist and are non-empty
+    let data2 = null;
+    let pwd2 = null;
+
+    if (payloadParts.length > 1 && payloadParts[1] !== "" &&
+        passwordParts.length > 1 && passwordParts[1] !== "") {
+        data2 = nacl.util.decodeUTF8(payloadParts[1]);
+        pwd2 = passwordParts[1];
+    }
+
+    return { data1, pwd1, data2, pwd2 };
+}
+
+/**
+ * Gathers user input for steganographic decryption.
+ * @returns {{pwd1: string, pwd2: string|null} | null}
+ */
+function getStegoDecryptionPasswords() {
+    const passwordInput = prompt("Enter stego password(s) (use | for second password):");
+    if (!passwordInput) return null; // User canceled
+
+    const passwords = passwordInput.trim();
+    if (passwords === "") return null; // Empty input
+
+    const passwordParts = passwords.split('|').map(p => p.trim());
+    const pwd1 = passwordParts[0];
+    const pwd2 = (passwordParts.length > 1 && passwordParts[1] !== "") ? passwordParts[1] : null;
+
+    return { pwd1, pwd2 };
+}
+
 document.addEventListener('DOMContentLoaded', () => {
     const imgPreview = document.getElementById('stego-image-preview');
 
-    // Encrypt buttons
-    document.getElementById('stego-encrypt-png').addEventListener('click', () => {
-        if (!imgPreview || !imgPreview.src || imgPreview.style.display === 'none') {
-            alert('Please load a cover image first.');
-            return;
-        }
-        const payload = prompt('Enter text to embed in the image:');
-        if (payload === null || payload.length === 0) return;
-
-        const bits = textToBits(payload);
-        const stegoPwd = prompt('Enter stego password to protect the hidden payload:');
-        if (stegoPwd === null) return;
-
-        encodePNG(imgPreview, bits, stegoPwd, (success, msg) => {
-            if (success) alert('PNG stego image created and downloaded');
-            else alert('Stego embedding failed: ' + (msg || 'unknown error'));
-        });
-    });
-
-    document.getElementById('stego-encrypt-jpg').addEventListener('click', () => {
-        if (!imgPreview || !imgPreview.src || imgPreview.style.display === 'none') {
-            alert('Please load a cover image first.');
-            return;
-        }
-        const payload = prompt('Enter text to embed in the image:');
-        if (payload === null || payload.length === 0) return;
-
-        const bits = textToBits(payload);
-        const stegoPwd = prompt('Enter stego password to protect the hidden payload:');
-        if (stegoPwd === null) return;
-
-        encodeJPG(imgPreview, bits, stegoPwd, (success, msg) => {
-            if (success) alert('JPG stego image created and downloaded');
-            else alert('Stego embedding failed: ' + (msg || 'unknown error'));
-        });
-    });
-
-    // Extract and decrypt button (already present)
-    /*
-    document.getElementById('stego-decrypt-btn').addEventListener('click', () => {
+    // Encrypt PNG Button
+    document.getElementById('stego-encrypt-png').addEventListener('click', async () => {
         const imgPreview = document.getElementById('stego-image-preview');
-        const stegoPwd = prompt("Enter stego password to extract:");
-        if (stegoPwd === null) return;
+        if (!imgPreview || !imgPreview.src || imgPreview.style.display === 'none') {
+            alert('Please load a cover image first.');
+            return;
+        }
 
-        decodeImage(imgPreview, stegoPwd, (bits, msg) => {
-            if (!bits || bits.length === 0) {
-                alert("No hidden data found or incorrect password.");
-                return;
-            }
+        const inputs = await getStegoEncryptionInputs();
+        if (!inputs) return; // User canceled or invalid input
 
-            try {
-                const text = bitsToText(bits);
-                alert("Extracted text:\n\n" + text);
+        try {
+            const resultURI = await encodePNG({
+                image: imgPreview,
+                data: inputs.data1,
+                password: inputs.pwd1,
+                iterations: 1,
+                data2: inputs.data2,
+                password2: inputs.pwd2,
+                iterations2: 1
+            });
 
-                // Optional: Put it in composeBox
-                const composeBox = document.getElementById('composeBox');
-                if (composeBox) composeBox.innerText = text;
-            } catch (e) {
-                alert("Failed to decode text: " + e.message);
-            }
-        });
-    });*/
+            imgPreview.src = resultURI;
+            const statusMsg = inputs.pwd2 ? "Dual messages embedded successfully." : "Primary message embedded successfully.";
+            alert(statusMsg);
+        } catch (error) {
+            alert('PNG stego embedding failed: ' + error.message);
+        }
+    });
+
+    // Encrypt JPG Button
+    document.getElementById('stego-encrypt-jpg').addEventListener('click', async () => {
+        const imgPreview = document.getElementById('stego-image-preview');
+        if (!imgPreview || !imgPreview.src || imgPreview.style.display === 'none') {
+            alert('Please load a cover image first.');
+            return;
+        }
+
+        const inputs = await getStegoEncryptionInputs();
+        if (!inputs) return; // User canceled or invalid input
+
+        try {
+            const resultURI = await encodeJPG({
+                image: imgPreview,
+                data: inputs.data1,
+                password: inputs.pwd1,
+                skipEncrypt: false,
+                iterations: 1,
+                data2: inputs.data2,
+                password2: inputs.pwd2,
+                iterations2: 1
+            });
+
+            imgPreview.src = resultURI;
+            const statusMsg = inputs.pwd2 ? "Dual messages embedded successfully." : "Primary message embedded successfully.";
+            alert(statusMsg);
+        } catch (error) {
+            alert('JPG stego embedding failed: ' + error.message);
+        }
+    });
+
+    // Extract and Decrypt Button
+    // Extract and Decrypt Button
     document.getElementById('stego-decrypt-btn').addEventListener('click', async () => {
         const imgPreview = document.getElementById('stego-image-preview');
-
         if (!imgPreview || !imgPreview.src || imgPreview.style.display === 'none') {
             alert("Please load a stego image first.");
             return;
         }
 
-        const stegoPwd = prompt("Enter stego password to extract:");
-        if (stegoPwd === null) return;
+        const passwords = getStegoDecryptionPasswords();
+        if (!passwords) return; // User canceled or invalid input
 
         try {
-            // Await the modernized decodeImage
-            const result = await decodeImage(imgPreview, stegoPwd);
+            const result = await decodeImage({
+                image: imgPreview,
+                password: passwords.pwd1,
+                skipEncrypt: false,
+                iterations: 1,
+                password2: passwords.pwd2, // null if no second password
+                iterations2: 1
+            });
 
-            const bytes = result.primary.data;
+            let outputText = "";
 
-            if (!bytes || bytes.length === 0) {
-                alert("No hidden data found or incorrect password.");
-                return;
+            // Process primary
+            if (result.primary && result.primary.length > 0) {
+                outputText = nacl.util.encodeUTF8(result.primary);
             }
 
-            // Convert Uint8Array to UTF-8 text
-            const text = nacl.util.encodeUTF8(bytes);
+            // Process secondary only if a second password was provided
+            if (passwords.pwd2 && result.secondary && result.secondary.length > 0) {
+                const text2 = nacl.util.encodeUTF8(result.secondary);
+                outputText += "|" + text2;
+            }
 
-            alert("Extracted text:\n\n" + text);
-
-            // Put it in composeBox
-            const composeBox = document.getElementById('composeBox');
-            if (composeBox) {
-                composeBox.value = text;
+            if (outputText) {
+                alert("Extracted text:\n\n" + outputText);
+                const composeBox = document.getElementById('composeBox');
+                if (composeBox) composeBox.value = outputText;
+            } else {
+                alert("No hidden data found or incorrect password(s).");
             }
         } catch (e) {
             console.error("Stego Decryption Error:", e);
-            alert("Failed to extract or decode: " + e.message);
+            alert("Failed to extract: " + e.message);
         }
     });
 });
-/*
-document.addEventListener('DOMContentLoaded', () => {
-    document.getElementById('stego-encrypt-png').addEventListener('click', () => handleStegoEncrypt('PNG'));
-    document.getElementById('stego-encrypt-jpg').addEventListener('click', () => handleStegoEncrypt('JPG'));
-
-    // 2. Extract and Decrypt
-    document.getElementById('stego-decrypt-btn').addEventListener('click', () => {
-        const imgPreview = document.getElementById('stego-image-preview');
-        const stegoPwd = prompt("Enter stego password to extract:");
-        if (stegoPwd === null) return;
-
-        decodeImage(imgPreview, stegoPwd, async (bits, msg) => {
-            if (msg) {
-                alert("Extraction error: " + msg);
-                return;
-            }
-
-            const cipherBytes = bitsToBytes(bits);
-            try {
-                // Pass raw bytes directly to the binary decryption pipeline
-                await continueDecryptBinary(cipherBytes);
-            } catch (e) {
-                alert("Decryption failed: " + e.message);
-            }
-        });
-    });
-});*/
