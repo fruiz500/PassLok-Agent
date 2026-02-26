@@ -977,13 +977,6 @@ function decodeFromCoefficients(type, startIndex, coefficients) {
 		}
 	}
 
-	// DEBUG LOGS - Add this in decodeFromCoefficients
-	console.log("--- Stego Debug ---");
-	console.log("Extracted k:", k);
-	console.log("Total blocks:", blocks);
-	console.log("First 16 extracted bits:", outputBits.slice(0, 16));
-	console.log("Expected EOF Bytes:", imgEOF);
-
 	// NEW: Convert the entire bit-stream to bytes BEFORE searching for EOF
 	let outputBytes = packBitsToBytes(outputBits);
 
