@@ -8,6 +8,30 @@ const base36 = "0123456789abcdefghijkLmnopqrstuvwxyz"; //capital L so it won't b
 const base64 =
   "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
+function encodeBase64(arr) {
+  if (typeof btoa === 'undefined') {
+    return (new Buffer(arr)).toString('base64');
+  } else {
+    var i, s = [], len = arr.length;
+    for (i = 0; i < len; i++) s.push(String.fromCharCode(arr[i]));
+    return btoa(s.join('')).replace(/=/g, ''); //removed padding for PassLok
+  }
+};
+
+function decodeBase64(s) {
+  if (typeof atob === 'undefined') {
+    return new Uint8Array(Array.prototype.slice.call(new Buffer(s, 'base64'), 0));
+  } else {
+	  try{															//added for PassLok because atob may fail
+    var i, d = atob(s), b = new Uint8Array(d.length);
+	  }catch(error){
+		  return false
+	  }
+    for (i = 0; i < d.length; i++) b[i] = d.charCodeAt(i);
+    return b;
+  }
+};
+
 //function to test key strength and come up with appropriate key stretching. Based on WiseHash
 function keyStrength(string) {
   var entropy = entropyCalc(string),
@@ -130,7 +154,7 @@ function makeHashili(str) {
   const s = str.trim();
   if (!s) return "";
 
-  const fullHash = nacl.hash(nacl.util.decodeUTF8(s));
+  const fullHash = nacl.hash(new TextEncoder().encode(s));
   const code = fullHash.slice(-2);
   let code10 = ((code[0] << 8) + code[1]) % 10000;
 
@@ -178,7 +202,7 @@ function makeShared(pub, sec) {
 
 //makes the DH public key (Montgomery) from a published Lock, which is a Signing public key (Edwards) in base36
 function convertPubStr(Lock) {
-  var LockBin = nacl.util.decodeBase64(changeBase(Lock, base36, base64, true));
+  var LockBin = decodeBase64(changeBase(Lock, base36, base64, true));
   if (!LockBin) return false;
   return ed2curve.convertPublicKey(LockBin);
 }
@@ -190,7 +214,7 @@ function symEncrypt(plainstr, nonce24, symKey, isCompressed) {
   
   // Skip compression if data contains embedded files (data URIs)
   if (!isCompressed || plainstr.match('="data:')) {
-    plain = nacl.util.decodeUTF8(plainstr);
+    plain = new TextEncoder().encode(plainstr);
   } else {
     plain = LZString.compressToUint8Array(plainstr);
   }
@@ -224,7 +248,7 @@ function keyEncrypt(plaintext, key) {
   // 1. Handle input type
   if (typeof plaintext === 'string') {
     // String path
-    msgUint8 = nacl.util.decodeUTF8(plaintext);
+    msgUint8 = new TextEncoder().encode(plaintext);
   } else if (plaintext instanceof Uint8Array) {
     // Binary path for ephemeral keys/locks
     msgUint8 = plaintext;
@@ -243,7 +267,7 @@ function keyEncrypt(plaintext, key) {
   fullMessage.set(box, 1 + nonce.length);
 
   // 4. Return as base64 string for storage
-  return nacl.util.encodeBase64(fullMessage);
+  return encodeBase64(fullMessage);
 }
 
 /**
@@ -256,7 +280,7 @@ function keyEncrypt(plaintext, key) {
 function keyDecrypt(ciphertextBase64, key, returnUint8 = false) {
   let fullMessage;
   try {
-    fullMessage = nacl.util.decodeBase64(ciphertextBase64);
+    fullMessage = decodeBase64(ciphertextBase64);
   } catch (e) {
     console.error("keyDecrypt: Failed to decode base64 input.", e);
     return null;
@@ -285,7 +309,7 @@ function keyDecrypt(ciphertextBase64, key, returnUint8 = false) {
   } else {
     // String path
     try {
-      return nacl.util.encodeUTF8(decrypted);
+      return new TextDecoder().decode(decrypted);
     } catch (e) {
       console.error("keyDecrypt: Decrypted data is not valid UTF-8.", e);
       return null;
@@ -384,5 +408,5 @@ function ezLockToUint8(lockB36) {
   // 1. Convert Base36 string to Base64 string using your changeBase
   const b64 = changeBase(lockB36.trim(), base36, base64, true);
   // 2. Convert Base64 string to Uint8Array for nacl
-  return nacl.util.decodeBase64(b64);
+  return decodeBase64(b64);
 }

@@ -66,7 +66,7 @@ function encryptForRecipientWithLock(recipientSigningPub, nonce24, msgKey, mySec
     // FIX 1: Always read from the GLOBAL locDir
     if (!window.locDir[recipientEmail]) {
       window.locDir[recipientEmail] = {
-        lock: changeBase(nacl.util.encodeBase64(recipientSigningPub), base64, base36, true),
+        lock: changeBase(encodeBase64(recipientSigningPub), base64, base36, true),
         ro: { lastkey: null, lastlock: null, turn: null }
       };
     }
@@ -156,7 +156,7 @@ async function handleInvitationEncryption(msgUint8, mySecretKey) {
 
   if (pwd.trim() !== "") {
     // Symmetric Mode: Use password
-    encryptionKey = wiseHash(pwd, nacl.util.encodeBase64(nonce15));
+    encryptionKey = wiseHash(pwd, encodeBase64(nonce15));
     modeLabel = "SYMMETRIC";
   } else {
     // Invitation Mode: Use sender's Lock
@@ -198,6 +198,7 @@ async function startEncryption() {
   const includeLock = document.getElementById('includeLock');
   const decoyToggle = document.getElementById('decoyModeToggle');
   const decoyArea = document.getElementById('decoyMessageArea');
+  const stegoToggle = document.getElementById('stegoModeToggle');
 
   if (statusMsg) statusMsg.textContent = "Encrypting...";
 
@@ -233,7 +234,6 @@ async function startEncryption() {
       mode = 72; // Signed (default)
     }
 
-    // --- CALL CORE ENCRYPTION ---
     const settings = {
       selectedRecipients: Array.from(lockList.selectedOptions).map(o => o.value.trim()).filter(s => s),
       mode: mode, // Use the new mode parameter
@@ -243,6 +243,42 @@ async function startEncryption() {
       decoyText: (decoyToggle && decoyToggle.checked) ? decoyArea.value.trim() : ""
     };
 
+    // --- STEGO-ONLY MODE (MOVED HERE) ---
+    // Check this BEFORE calling coreEncrypt to avoid double password prompt
+    const hasRecipients = settings.selectedRecipients && settings.selectedRecipients.length > 0;
+    if (stegoToggle && stegoToggle.checked && !hasRecipients) {
+      const plainText = composeBox.innerHTML.trim() || composeBox.value.trim();
+      if (!plainText) {
+        alert("Please enter a message to hide.");
+        if (statusMsg) statusMsg.textContent = "";
+        return;
+      }
+
+      // Prepend type byte 103 ('g') for Stego-Only mode
+      const textBytes = new TextEncoder().encode(plainText);
+      const stegoOnlyBin = new Uint8Array(1 + textBytes.length);
+      stegoOnlyBin[0] = 103;
+      stegoOnlyBin.set(textBytes, 1);
+
+      window.pendingStegoBin = stegoOnlyBin;
+      window.isStegoPayloadEncrypted = false;
+      window.isStegoOnlyWithFolderKey = !!window.activeFolderKey;
+
+      const imgPreview = document.getElementById('stego-image-preview');
+      if (!imgPreview || !imgPreview.src || imgPreview.style.display === 'none') {
+        alert("Please load a cover image first.");
+        if (statusMsg) statusMsg.textContent = "";
+        return;
+      }
+
+      const isPng = imgPreview.src.startsWith('data:image/png');
+      document.getElementById(isPng ? 'stego-encrypt-png' : 'stego-encrypt-jpg').click();
+
+      if (statusMsg) statusMsg.textContent = "Embedding message in image...";
+      return; // Exit early - skip coreEncrypt entirely
+    }
+
+    // --- CALL CORE ENCRYPTION ---
     const result = await coreEncrypt(msgUint8, settings);
     if (!result) {
       if (statusMsg) statusMsg.textContent = "";
@@ -251,8 +287,29 @@ async function startEncryption() {
 
     const { finalBin, modeLabel, base36Lock, suppressLock } = result;
 
+    if (stegoToggle && stegoToggle.checked) {
+      const imgPreview = document.getElementById('stego-image-preview');
+      if (!imgPreview || !imgPreview.src || imgPreview.style.display === 'none') {
+        alert("Please load a cover image first.");
+        return;
+      }
+
+      // We pass the finalBin directly to the stego embedding logic
+      // We'll trigger the PNG or JPG embedding based on the source image type
+      const isPng = imgPreview.src.startsWith('data:image/png');
+      const btnId = isPng ? 'stego-encrypt-png' : 'stego-encrypt-jpg';
+
+      // We'll store the binary on the window object temporarily so sidepanel_stego.js can grab it
+      window.pendingStegoBin = finalBin;
+      window.isStegoPayloadEncrypted = true;
+      document.getElementById(btnId).click();
+
+      if (statusMsg) statusMsg.textContent = "Embedding message in image...";
+      return; // Exit so it doesn't update the text area
+    }
+
     // --- OUTPUT AS TEXT ---
-    const ciphertextB64 = nacl.util.encodeBase64(finalBin).replace(/=+$/, '');
+    const ciphertextB64 = encodeBase64(finalBin).replace(/=+$/, '');
     let lockPrefix = "";
 
     if (!suppressLock) {
@@ -329,13 +386,13 @@ function decoyEncrypt(plaintext) {
 
     // 1. Fill 75 bytes with spaces (0x20)
     const finalPlaintext = new Uint8Array(75).fill(0x20);
-    const textBytes = nacl.util.decodeUTF8(plaintext);
+    const textBytes = new TextEncoder().encode(plaintext);
     finalPlaintext.set(textBytes.subarray(0, Math.min(textBytes.length, 75)));
 
     // 2. Standard encryption
     const nonce = nacl.randomBytes(NONCE_LENGTH);
     const nonce24 = makeNonce24(nonce);
-    const sharedKey = wiseHash(decoyKeyStr, nacl.util.encodeBase64(nonce));
+    const sharedKey = wiseHash(decoyKeyStr, encodeBase64(nonce));
     const cipher = nacl.secretbox(finalPlaintext, nonce24, sharedKey);
 
     // 3. Assemble: 9 (nonce) + 91 (cipher) = 100 bytes exactly
@@ -456,6 +513,8 @@ async function coreEncrypt(msgUint8, settings) {
   let finalBin, modeLabel;
   let base36Lock = "";
   let suppressLock = false;
+  let storageKey = null; // ADD THIS LINE
+  let mySecretKey = null; // ADD THIS LINE FOR GOOD MEASURE
 
   // 1. Folder Key Path
   if (settings.selectedRecipients.length === 0) {
@@ -571,7 +630,7 @@ async function coreEncrypt(msgUint8, settings) {
       }
 
       // 2. Convert the lock to Uint8Array for the crypto functions
-      const recipientUint8 = nacl.util.decodeBase64(changeBase(lockB36, base36, base64, true));
+      const recipientUint8 = decodeBase64(changeBase(lockB36, base36, base64, true));
 
       // 3. Call our refactored function with the email context
       const slot = encryptForRecipientWithLock(

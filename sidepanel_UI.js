@@ -40,6 +40,19 @@ function setCryptoMode(mode) {
       emailDisplay.classList.add('hidden');
     }
   }
+
+  const stegoContainer = document.getElementById('stego-image-container');
+  const stegoActions = document.getElementById('stego-actions');
+
+  if (stegoContainer) {
+    if (mode === 'encrypt' || mode === 'decrypt') {
+      stegoContainer.classList.remove('hidden');
+      if (stegoActions) stegoActions.classList.remove('hidden');
+    } else {
+      stegoContainer.classList.add('hidden');
+      if (stegoActions) stegoActions.classList.add('hidden');
+    }
+  }
 }
 
 // Pull state immediately on load

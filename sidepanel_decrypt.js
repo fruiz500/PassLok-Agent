@@ -100,7 +100,7 @@ async function continueDecrypt(input, masterPwd, myEmail) {
     if (typeof input === 'string' || (input.raw && typeof input.raw === 'string')) {
       const text = input.raw || input.text || input;
       parsed = extractEmbeddedLock(text);
-      fullBytes = nacl.util.decodeBase64(parsed.text);
+      fullBytes = decodeBase64(parsed.text);
     } else {
       // It's already binary (from continueDecryptBinary)
       fullBytes = input.raw || input;
@@ -188,7 +188,7 @@ async function prepareCommonData(masterPwd, myEmail) {
   const myLockbin = nacl.sign.keyPair.fromSecretKey(KeySgn).publicKey;
 
   // 1. Convert to Base64 first
-  const b64 = nacl.util.encodeBase64(myLockbin);
+  const b64 = encodeBase64(myLockbin);
   // 2. Convert to Base36 for storage and validation
   const base36Lock = changeBase(b64, base64, base36, true);
 
@@ -211,7 +211,7 @@ async function routeByMode(type, cipherText, parsed, commonData) {
 async function handleGMode(input, parsed) {
   try {
     // 1. Normalize input and extract binary components
-    const fullBlob = (typeof input === 'string') ? nacl.util.decodeBase64(input) : input;
+    const fullBlob = (typeof input === 'string') ? decodeBase64(input) : input;
     if (fullBlob[0] !== 128) throw new Error("Invalid g-mode marker");
 
     const nonce15 = fullBlob.slice(1, 16);
@@ -219,7 +219,7 @@ async function handleGMode(input, parsed) {
     const cipher = fullBlob.slice(116);
     const nonce24 = makeNonce24(nonce15);
 
-    let messageKey = null;
+    let msgKey = null;
     let senderName = "Invitation/Self";
 
     // 2. Attempt 1: Embedded Lock (Invitation Mode)
@@ -228,39 +228,39 @@ async function handleGMode(input, parsed) {
         const lockKey = ezLockToUint8(parsed.ezLock);
         // Test if this key works
         if (nacl.secretbox.open(cipher, nonce24, lockKey)) {
-          messageKey = lockKey;
+          msgKey = lockKey;
           senderName = "Invitation Lock";
         }
-      } catch (e) { messageKey = null; }
+      } catch (e) { msgKey = null; }
     }
 
     // 3. Attempt 2: Active Folder Key
-    if (!messageKey && window.activeFolderKey) {
+    if (!msgKey && window.activeFolderKey) {
       if (nacl.secretbox.open(cipher, nonce24, window.activeFolderKey)) {
-        messageKey = window.activeFolderKey;
+        msgKey = window.activeFolderKey;
         senderName = "Folder Key";
       }
     }
 
     // 4. Attempt 3: Symmetric Password
-    if (!messageKey) {
+    if (!msgKey) {
       const pwd = prompt("Enter the password for this g-mode message:");
       if (!pwd) throw new Error("Password required for g-mode.");
 
-      const symKey = wiseHash(pwd, nacl.util.encodeBase64(nonce15));
+      const symKey = wiseHash(pwd, encodeBase64(nonce15));
       if (nacl.secretbox.open(cipher, nonce24, symKey)) {
-        messageKey = symKey;
+        msgKey = symKey;
         senderName = "Symmetric Password";
       }
     }
 
-    if (!messageKey) throw new Error("Decryption failed. Wrong password or corrupted data.");
+    if (!msgKey) throw new Error("Decryption failed. Wrong password or corrupted data.");
 
     // 5. Return standardized object
     // Note: We return 'cipher' so continueDecrypt can call decryptPayload
     return {
       success: true,
-      messageKey: messageKey,
+      msgKey: msgKey,
       nonce: nonce24,
       padding: padding,
       cipher: cipher,
@@ -296,7 +296,7 @@ async function handleAnonymousMode(cipherInput, commonData) {
     const msgKey = nacl.secretbox.open(msgKeycipher, nonce24, sharedKey);
     if (!msgKey) throw new Error("Failed to decrypt message key");
 
-    return { success: true, messageKey: msgKey, nonce: nonce24, padding: padding, cipher };
+    return { success: true, msgKey: msgKey, nonce: nonce24, padding: padding, cipher };
   } catch (e) {
     return { success: false, error: e.message };
   }
@@ -328,7 +328,7 @@ async function handleSignedMode(cipherInput, parsed, commonData) {
         if (msgKeycipher) {
           const msgKey = nacl.secretbox.open(msgKeycipher, nonce24, sharedKey);
           if (msgKey) {
-            return { success: true, messageKey: msgKey, nonce: nonce24, padding: padding, cipher, senderName: matchedSlot.senderName };
+            return { success: true, msgKey: msgKey, nonce: nonce24, padding: padding, cipher, senderName: matchedSlot.senderName };
           }
         }
       }
@@ -376,7 +376,7 @@ async function handleSignedMode(cipherInput, parsed, commonData) {
           if (msgKey) {
             return {
               success: true,
-              messageKey: msgKey,
+              msgKey: msgKey,
               nonce: nonce24,
               padding: padding,
               cipher,
@@ -669,9 +669,9 @@ async function decryptPayload(cipher, nonce, msgKey) {
   let plaintext;
   try {
     plaintext = LZString.decompressFromUint8Array(plain);
-    if (!plaintext) plaintext = nacl.util.encodeUTF8(plain);
-  } catch {
-    plaintext = nacl.util.encodeUTF8(plain);
+    if (!plaintext) plaintext = new TextDecoder().decode(plain);
+  } catch (e) {
+    plaintext = new TextDecoder().decode(plain);
   }
 
   return plaintext;
@@ -908,11 +908,11 @@ function doDecoyDecrypt() {
     const nonce24 = makeNonce24(nonce);
 
     // The 'work' happens here
-    const sharedKey = wiseHash(decoyKeyStr, nacl.util.encodeBase64(nonce));
+    const sharedKey = wiseHash(decoyKeyStr, encodeBase64(nonce));
     const plain = nacl.secretbox.open(cipherMsg, nonce24, sharedKey);
 
     if (plain) {
-      const decoded = decodeURI(nacl.util.encodeUTF8(plain)).trim();
+      const decoded = decodeURI(new TextDecoder().decode(plain)).trim();
       const readMsg = document.getElementById('composeBox');
 
       // Append the hidden message to the display
@@ -967,7 +967,7 @@ async function proceedWithFileDecryption(fileBytes, masterPwd) {
 
   const blob = {
     raw: fileBytes,
-    base64: nacl.util.encodeBase64(fileBytes)
+    base64: encodeBase64(fileBytes)
   };
 
   await continueDecrypt(blob, masterPwd, myEmail);
